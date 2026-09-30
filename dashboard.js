@@ -1693,7 +1693,7 @@
 
             saveFit();
             const now = new Date();
-            setFitStatus(`Synced at ${pad2(now.getHours())}:${pad2(now.getMinutes())}${notes.length ? `. Skipped: ${notes.join(", ")}` : ""}`, notes.length ? "warn" : "good");
+            setFitStatus(`[v5 ${FIT_ON ? "fit" : "health"}] Synced at ${pad2(now.getHours())}:${pad2(now.getMinutes())}${notes.length ? `. Skipped: ${notes.join(", ")}` : ""}`, notes.length ? "warn" : "good");
         } catch (e) {
             setFitStatus(e.message === "expired" ? "Google session ended. Press Connect Google Health to link again." : `Google sync failed: ${e.message}`, "bad");
         } finally {
