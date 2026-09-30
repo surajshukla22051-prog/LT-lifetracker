@@ -10,7 +10,7 @@
     /* ---- per-account storage: every login gets its own private slot in this browser ---- */
     const CFG = window.LT_CONFIG || {};
     const GID = CFG.GOOGLE_CLIENT_ID || "";
-    const HEALTH_ON = Boolean(CFG.GOOGLE_HEALTH) && /^[0-9]+-.+\.apps\.googleusercontent\.com$/.test(GID);
+    const HEALTH_ON = Boolean(CFG.GOOGLE_HEALTH || CFG.GOOGLE_FIT) && /^[0-9]+-.+\.apps\.googleusercontent\.com$/.test(GID);
 
     if (!currentUser.uid) {
         currentUser.uid = currentUser.name === "Guest" ? "guest"
@@ -719,10 +719,14 @@
 
     const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const PALETTE = ["#4da6ff", "#22d3ee", "#a78bfa", "#f472b6", "#fbbf24", "#34d399", "#fb7185", "#60a5fa"];
+    const FIT_ON = Boolean(CFG.GOOGLE_FIT);
     const HEALTH_SCOPES = [
         "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
         "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
-    ].join(" ");
+    ].concat(FIT_ON ? [
+        "https://www.googleapis.com/auth/fitness.activity.read",
+        "https://www.googleapis.com/auth/fitness.sleep.read"
+    ] : []).join(" ");
 
     let goals = JSON.parse(store.get("goals") || "null") || [
         { id: "g-all", name: "Monthly consistency", habit: "*", target: 80 }
@@ -1567,11 +1571,66 @@
         return res.json();
     }
 
+    /* Google Fit REST API: fallback that reads the phone's Google Fit data (works only while Google still runs the Fit API). */
+    async function syncFit(notes, wantSteps, wantSleep) {
+        const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+        const startMs = midnight.getTime() - 13 * DAY_MS;
+        const endMs = midnight.getTime() + DAY_MS;
+        const isoLocal = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+
+        if (wantSteps) {
+            try {
+                const r = await gfetch("https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        aggregateBy: [{ dataTypeName: "com.google.step_count.delta", dataSourceId: "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps" }],
+                        bucketByTime: { durationMillis: DAY_MS },
+                        startTimeMillis: String(startMs),
+                        endTimeMillis: String(endMs)
+                    })
+                });
+                (r.bucket || []).forEach((b) => {
+                    let total = 0;
+                    (b.dataset || []).forEach((ds) => (ds.point || []).forEach((p) => (p.value || []).forEach((v) => { total += Number(v.intVal || 0); })));
+                    if (total > 0) {
+                        const f = fitness[isoLocal(Number(b.startTimeMillis))] || (fitness[isoLocal(Number(b.startTimeMillis))] = {});
+                        f.steps = total; f.src_steps = "google";
+                    }
+                });
+            } catch (e) {
+                if (e.message === "expired") throw e;
+                console.error("Google Fit steps failed", e);
+                notes.push(`Fit steps failed (${e.message})`);
+            }
+        }
+
+        if (wantSleep) {
+            try {
+                const url = `https://www.googleapis.com/fitness/v1/users/me/sessions?activityType=72&startTime=${encodeURIComponent(new Date(startMs).toISOString())}&endTime=${encodeURIComponent(new Date(endMs).toISOString())}`;
+                const r = await gfetch(url);
+                const nights = {};
+                (r.session || []).forEach((s) => {
+                    const mins = (Number(s.endTimeMillis) - Number(s.startTimeMillis)) / 60000;
+                    if (mins > 0) { const iso = isoLocal(Number(s.endTimeMillis)); nights[iso] = (nights[iso] || 0) + mins; }
+                });
+                Object.keys(nights).forEach((iso) => {
+                    const f = fitness[iso] || (fitness[iso] = {});
+                    f.sleep = Math.round((nights[iso] / 60) * 10) / 10; f.src_sleep = "google";
+                });
+            } catch (e) {
+                if (e.message === "expired") throw e;
+                console.error("Google Fit sleep failed", e);
+                notes.push(`Fit sleep failed (${e.message})`);
+            }
+        }
+    }
+
     async function syncGoogle() {
         if (!googleToken() || syncing) return;
         syncing = true;
         setFitStatus("Syncing with Google…", "");
         const notes = [];
+        let stepsOk = false, sleepOk = false;
         try {
             const t0 = todayUTC();
             const civil = (ms) => { const d = new Date(ms); return { date: { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() } }; };
@@ -1590,10 +1649,11 @@
                     const f = fitness[iso] || (fitness[iso] = {});
                     if (v > 0) { f.steps = v; f.src_steps = "google"; }
                 });
+                stepsOk = true;
             } catch (e) {
                 if (e.message === "expired") throw e;
                 console.error("Google steps sync failed", e);
-                notes.push(e.status === 403 ? "steps not shared (403)" : `steps failed (${e.message})`);
+                notes.push(`Health steps failed (${e.message})`);
             }
 
             try {
@@ -1621,11 +1681,14 @@
                         f.src_sleep = "google";
                     }
                 });
+                sleepOk = true;
             } catch (e) {
                 if (e.message === "expired") throw e;
                 console.error("Google sleep sync failed", e);
-                notes.push(e.status === 403 ? "sleep not shared (403)" : `sleep failed (${e.message})`);
+                notes.push(`Health sleep failed (${e.message})`);
             }
+
+            if (FIT_ON && (!stepsOk || !sleepOk)) await syncFit(notes, !stepsOk, !sleepOk);
 
             saveFit();
             const now = new Date();
