@@ -1557,7 +1557,13 @@
             headers: Object.assign({ Authorization: `Bearer ${token}`, Accept: "application/json", "Content-Type": "application/json" }, (opts && opts.headers) || {})
         }));
         if (res.status === 401) { sessionStorage.removeItem("lifetrack-gtoken"); throw new Error("expired"); }
-        if (!res.ok) { const err = new Error(`HTTP ${res.status}`); err.status = res.status; throw err; }
+        if (!res.ok) {
+            let detail = "";
+            try { const j = await res.json(); detail = (j && j.error && (j.error.message || j.error.status)) || ""; } catch (_) { /* no body */ }
+            const err = new Error(`HTTP ${res.status}${detail ? ": " + String(detail).slice(0, 150) : ""}`);
+            err.status = res.status;
+            throw err;
+        }
         return res.json();
     }
 
@@ -1568,12 +1574,13 @@
         const notes = [];
         try {
             const t0 = todayUTC();
-            const civil = (ms) => { const d = new Date(ms); return { date: { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() }, time: { hours: 0, minutes: 0, seconds: 0, nanos: 0 } }; };
+            const civil = (ms) => { const d = new Date(ms); return { date: { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() } }; };
+            const SOURCES = "users/me/dataSourceFamilies/google-sources";
 
             try {
                 const steps = await gfetch("https://health.googleapis.com/v4/users/me/dataTypes/steps/dataPoints:dailyRollUp", {
                     method: "POST",
-                    body: JSON.stringify({ range: { start: civil(t0 - 13 * DAY_MS), end: civil(t0 + DAY_MS) }, windowSizeDays: 1 })
+                    body: JSON.stringify({ range: { start: civil(t0 - 13 * DAY_MS), end: civil(t0 + DAY_MS) }, windowSizeDays: 1, dataSourceFamily: SOURCES })
                 });
                 (steps.rollupDataPoints || []).forEach((p) => {
                     const d = p.civilStartTime && p.civilStartTime.date;
@@ -1595,7 +1602,7 @@
                 const nights = {};
                 let pageToken = "";
                 for (let page = 0; page < 5; page += 1) {
-                    const url = `https://health.googleapis.com/v4/users/me/dataTypes/sleep/dataPoints:reconcile?filter=${encodeURIComponent(`sleep.interval.civil_end_time >= "${since}"`)}${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ""}`;
+                    const url = `https://health.googleapis.com/v4/users/me/dataTypes/sleep/dataPoints:reconcile?dataSourceFamily=${encodeURIComponent(SOURCES)}&filter=${encodeURIComponent(`sleep.interval.civil_end_time >= "${since}"`)}${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ""}`;
                     const sleep = await gfetch(url);
                     (sleep.dataPoints || []).forEach((dp) => {
                         const s = dp.sleep;
