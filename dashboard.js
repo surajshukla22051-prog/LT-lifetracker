@@ -1575,7 +1575,7 @@
         try {
             const t0 = todayUTC();
             const civil = (ms) => { const d = new Date(ms); return { date: { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() } }; };
-            const SOURCES = "users/me/dataSourceFamilies/google-sources";
+            const SOURCES = "users/me/dataSourceFamilies/all-sources";
 
             try {
                 const steps = await gfetch("https://health.googleapis.com/v4/users/me/dataTypes/steps/dataPoints:dailyRollUp", {
