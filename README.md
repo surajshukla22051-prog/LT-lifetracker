@@ -1,5 +1,10 @@
 # LifeTrack
 
+🚀 **[Open LifeTrack](https://surajshukla22051-prog.github.io/LT-lifetracker/)**
+
+A simple and modern life tracking dashboard for managing habits, goals, routines and personal progress.
+
+
 A static LifeTrack habit-tracking dashboard.
 
 ## Run online with GitHub Pages
