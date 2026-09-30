@@ -720,13 +720,14 @@
     const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const PALETTE = ["#4da6ff", "#22d3ee", "#a78bfa", "#f472b6", "#fbbf24", "#34d399", "#fb7185", "#60a5fa"];
     const FIT_ON = Boolean(CFG.GOOGLE_FIT);
-    const HEALTH_SCOPES = [
-        "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
-        "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
-    ].concat(FIT_ON ? [
+    // Google Health API rejects tokens that also carry old Fit scopes, so only ONE family is ever requested.
+    const HEALTH_SCOPES = (FIT_ON ? [
         "https://www.googleapis.com/auth/fitness.activity.read",
         "https://www.googleapis.com/auth/fitness.sleep.read"
-    ] : []).join(" ");
+    ] : [
+        "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
+        "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
+    ]).join(" ");
 
     let goals = JSON.parse(store.get("goals") || "null") || [
         { id: "g-all", name: "Monthly consistency", habit: "*", target: 80 }
@@ -1636,7 +1637,7 @@
             const civil = (ms) => { const d = new Date(ms); return { date: { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() } }; };
             const SOURCES = "users/me/dataSourceFamilies/all-sources";
 
-            try {
+            if (!FIT_ON) try {
                 const steps = await gfetch("https://health.googleapis.com/v4/users/me/dataTypes/steps/dataPoints:dailyRollUp", {
                     method: "POST",
                     body: JSON.stringify({ range: { start: civil(t0 - 13 * DAY_MS), end: civil(t0 + DAY_MS) }, windowSizeDays: 1, dataSourceFamily: SOURCES })
@@ -1656,7 +1657,7 @@
                 notes.push(`Health steps failed (${e.message})`);
             }
 
-            try {
+            if (!FIT_ON) try {
                 const sinceMs = t0 - 14 * DAY_MS;
                 const since = isoFromUTC(sinceMs);
                 const nights = {};
