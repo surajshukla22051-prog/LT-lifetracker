@@ -4,6 +4,6 @@
    2) GOOGLE_HEALTH: keep false for plain "Continue with Google" login.
       Set true only if you also enabled the Google Health API scopes on the same Client ID. */
 window.LT_CONFIG = {
-    GOOGLE_CLIENT_ID: "PASTE_YOUR_CLIENT_ID_HERE.apps.googleusercontent.com",
+    GOOGLE_CLIENT_ID: "962104658585-rc3pe5st455kn9fia2dhq9s221f1fof4.apps.googleusercontent.com",
     GOOGLE_HEALTH: false
 };
