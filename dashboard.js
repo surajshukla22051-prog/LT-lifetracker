@@ -1601,7 +1601,7 @@
             } catch (e) {
                 if (e.message === "expired") throw e;
                 console.error("Google Fit steps failed", e);
-                notes.push(`Fit steps failed (${e.message})`);
+                notes.push((/insufficient/i.test(e.message) ? "Fit steps: permission missing, press Disconnect then Connect and tick ALL boxes" : `Fit steps failed (${e.message})`));
             }
         }
 
@@ -1621,7 +1621,7 @@
             } catch (e) {
                 if (e.message === "expired") throw e;
                 console.error("Google Fit sleep failed", e);
-                notes.push(`Fit sleep failed (${e.message})`);
+                notes.push((/insufficient/i.test(e.message) ? "Fit sleep: permission missing, press Disconnect then Connect and tick ALL boxes" : `Fit sleep failed (${e.message})`));
             }
         }
     }
@@ -1722,14 +1722,21 @@
             client_id: GID,
             login_hint: currentUser.email || undefined,
             scope: HEALTH_SCOPES,
+            include_granted_scopes: false,
             callback: (resp) => {
                 if (resp.error) { toast(`Google connection stopped: ${resp.error}`); return; }
+                const need = FIT_ON ? "fitness.activity.read" : "activity_and_fitness";
+                if (resp.scope && !resp.scope.includes(need)) {
+                    sessionStorage.removeItem("lifetrack-gtoken");
+                    setFitStatus("Steps permission was not ticked on the Google screen. Press Connect again and tick ALL boxes.", "bad");
+                    toast("Tick all permission boxes on the Google screen.");
+                    return;
+                }
                 sessionStorage.setItem("lifetrack-gtoken", JSON.stringify({ token: resp.access_token, exp: Date.now() + (Number(resp.expires_in || 3600) - 60) * 1000 }));
-                if (resp.scope && !resp.scope.includes("activity_and_fitness")) toast("Steps permission was not granted, so steps will stay manual.");
                 syncGoogle();
             }
         });
-        client.requestAccessToken({ prompt: "" });
+        client.requestAccessToken({ prompt: "consent" });
     }
 
     function disconnectGoogle() {
