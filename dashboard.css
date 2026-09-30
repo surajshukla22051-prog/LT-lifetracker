@@ -1783,3 +1783,153 @@ body.dark .radar-area { filter: drop-shadow(0 0 6px var(--primary-glow)); }
 }
 
 .tgt-line { display: inline-block; width: 16px; border-top: 2px dashed var(--zone-yellow); }
+
+/* =====================================================================
+   MOBILE LAYOUT (phones, <= 620px)
+   Side rail -> bottom navigation bar, full-width content.
+   ===================================================================== */
+@media (max-width: 620px) {
+    :root { --bottom-bar: 64px; }
+
+    html, body { min-height: 100dvh; }
+    body { padding-bottom: calc(var(--bottom-bar) + env(safe-area-inset-bottom, 0px) + 8px); }
+    .app, .main-content { min-height: 0; }
+
+    /* sidebar becomes a bottom tab bar */
+    .sidebar,
+    .sidebar:hover,
+    .sidebar:focus-within {
+        inset: auto 0 0 0;
+        flex-direction: row;
+        align-items: stretch;
+        gap: 4px;
+        width: 100%;
+        height: auto;
+        padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+        overflow: visible;
+        border-right: 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.10);
+        box-shadow: 0 -8px 24px rgba(5, 15, 35, 0.25);
+    }
+
+    .sidebar .logo,
+    .sidebar .quote-box { display: none; }   /* profile menu is still reachable from the top-right chip */
+
+    .sidebar .navigation {
+        display: flex;
+        flex: 1 1 auto;
+        gap: 2px;
+        min-width: 0;
+        width: auto;
+    }
+
+    .sidebar .sidebar-bottom {
+        display: flex;
+        flex: 0 0 auto;
+        min-width: 0;
+        width: auto;
+        margin: 0;
+    }
+
+    .sidebar .nav-item,
+    .sidebar .theme-button {
+        flex: 1 1 0;
+        flex-direction: column;
+        justify-content: center;
+        gap: 2px;
+        min-width: 0;
+        width: auto;
+        height: 52px;
+        padding: 4px 2px;
+        text-align: center;
+    }
+    .sidebar .theme-button { flex: 0 0 64px; }
+
+    .sidebar .nav-icon { width: 26px; min-width: 26px; height: 24px; font-size: 18px; }
+
+    /* labels always visible (no hover on touch) */
+    .sidebar .nav-text {
+        max-width: 100%;
+        opacity: 1;
+        transform: none;
+        font-size: 10.5px;
+        font-weight: 600;
+        line-height: 1.1;
+    }
+
+    .sidebar .nav-item.active {
+        box-shadow: inset 0 3px 0 #4da6ff, 0 0 16px var(--rail-active-glow);
+    }
+
+    /* content uses the full width now */
+    .main-content {
+        width: 100%;
+        margin-left: 0;
+        padding: 16px 12px 20px;
+    }
+
+    .level-up-footer,
+    .lt-footer {
+        width: 100%;
+        margin-left: 0;
+    }
+
+    /* header: compact, selects side by side, user chip on its own row */
+    .topbar { gap: 14px; margin-bottom: 16px; }
+    .topbar h1 { font-size: 26px; }
+
+    .top-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        width: 100%;
+    }
+    .top-actions .user-chip {
+        grid-column: 1 / -1;
+        grid-row: 1;
+        justify-content: space-between;
+        width: 100%;
+        padding: 6px 6px 6px 12px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+    }
+    .top-actions select {
+        width: 100%;
+        min-width: 0;
+        height: 44px;
+        font-size: 16px;      /* stops iOS zoom on focus */
+    }
+    input { font-size: 16px; }
+
+    /* cards */
+    .stats-grid, .main-grid, .bottom-grid { gap: 12px; }
+    .main-grid, .bottom-grid { margin-top: 12px; }
+    .habit-cards, .goal-grid { grid-template-columns: 1fr; }
+    .trend-grid { grid-template-columns: 1fr; }
+    .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .badge-grid { grid-template-columns: repeat(auto-fill, minmax(min(128px, 100%), 1fr)); }
+
+    .panel-header { flex-wrap: wrap; gap: 10px; }
+    .panel-header .secondary-button { min-height: 40px; }
+
+    /* habit table: narrower name column, smaller cells, still scrolls sideways */
+    .habit-table { min-width: 0; }
+    .habit-table th,
+    .habit-table td { min-width: 34px; height: 40px; padding: 4px; }
+    .habit-table th:first-child,
+    .habit-table td:first-child {
+        min-width: 104px;
+        max-width: 104px;
+        padding-left: 8px;
+        font-size: 13px;
+    }
+    .table-wrapper { -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+
+    /* floating bits must clear the bottom bar */
+    .toast { bottom: calc(var(--bottom-bar) + env(safe-area-inset-bottom, 0px) + 16px); }
+    .modal-back { padding: 12px; }
+    .modal { max-height: 85dvh; padding: 18px; }
+    .modal-actions { flex-wrap: wrap; }
+    .modal-actions button { flex: 1 1 120px; min-height: 44px; }
+    .profile-menu { max-height: calc(100dvh - var(--bottom-bar) - 24px); overflow: auto; }
+}
