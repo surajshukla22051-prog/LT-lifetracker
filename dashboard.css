@@ -428,6 +428,48 @@ input {
     margin-top: 16px;
 }
 
+.streak-panel {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+}
+
+.habit-panel {
+    align-self: start;
+}
+
+.streak-panel .streak-list {
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+    align-content: start;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    transition: scrollbar-color 180ms ease;
+}
+
+.streak-panel .streak-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.streak-panel .streak-list::-webkit-scrollbar-thumb {
+    border-radius: 6px;
+    background: transparent;
+    transition: background-color 180ms ease;
+}
+
+.streak-panel .streak-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.streak-panel .streak-list.is-scrolling {
+    scrollbar-color: var(--primary) transparent;
+}
+
+.streak-panel .streak-list.is-scrolling::-webkit-scrollbar-thumb {
+    background: var(--primary);
+}
+
 .bottom-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     margin-top: 16px;

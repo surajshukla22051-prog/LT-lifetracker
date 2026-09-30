@@ -456,12 +456,30 @@
         renderGoalAnalysis(percent, life);
         renderWeekStrip();
         renderRadarsAndStreaks();
+        syncStreakPanelHeight();
         renderFitness();
         renderBadges();
         renderManageList();
         renderGoalsPage();
         renderAnalytics(percent, completed, total, dailyTotals);
     }
+
+    function syncStreakPanelHeight() {
+        const tracker = document.querySelector(".habit-panel");
+        const streakPanel = document.querySelector(".streak-panel");
+        if (!tracker || !streakPanel) return;
+        streakPanel.style.height = `${tracker.getBoundingClientRect().height}px`;
+    }
+
+    window.addEventListener("resize", syncStreakPanelHeight, { passive: true });
+
+    const streakList = document.getElementById("streakList");
+    let streakScrollTimer;
+    streakList.addEventListener("scroll", () => {
+        streakList.classList.add("is-scrolling");
+        window.clearTimeout(streakScrollTimer);
+        streakScrollTimer = window.setTimeout(() => streakList.classList.remove("is-scrolling"), 700);
+    }, { passive: true });
 
     // Overall Progress = the selected month only. It starts from 0% on the 1st of every month.
     function renderProgressGauge(percent) {
@@ -791,7 +809,9 @@
         "https://www.googleapis.com/auth/fitness.body_temperature.read"
     ] : [
         "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
-        "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
+        "https://www.googleapis.com/auth/googlehealth.sleep.readonly",
+        "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
+        "https://www.googleapis.com/auth/googlehealth.nutrition.readonly"
     ]).join(" ");
 
     let goals = JSON.parse(store.get("goals") || "null") || [
@@ -1858,7 +1878,7 @@
                 const nights = {};
                 let pageToken = "";
                 for (let page = 0; page < 5; page += 1) {
-                    const url = `https://health.googleapis.com/v4/users/me/dataTypes/sleep/dataPoints:reconcile?dataSourceFamily=${encodeURIComponent(SOURCES)}&filter=${encodeURIComponent(`sleep.interval.civil_end_time >= "${since}"`)}${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ""}`;
+                    const url = `https://health.googleapis.com/v4/users/me/dataTypes/sleep/dataPoints:reconcile?filter=${encodeURIComponent(`sleep.interval.civil_end_time >= "${since}"`)}${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ""}`;
                     const sleep = await gfetch(url);
                     (sleep.dataPoints || []).forEach((dp) => {
                         const s = dp.sleep;
@@ -1884,13 +1904,72 @@
                 notes.push(`Health sleep failed (${e.message})`);
             }
 
+            if (!FIT_ON) {
+                const start = civil(t0 - 13 * DAY_MS);
+                const end = civil(t0 + DAY_MS);
+                const syncDailyMetric = async (dataType, key, label, valueFromPoint) => {
+                    try {
+                        const result = await gfetch(`https://health.googleapis.com/v4/users/me/dataTypes/${dataType}/dataPoints:dailyRollUp`, {
+                            method: "POST",
+                            body: JSON.stringify({ range: { start, end }, windowSizeDays: 1, dataSourceFamily: SOURCES })
+                        });
+                        (result.rollupDataPoints || []).forEach((point) => {
+                            const date = point.civilStartTime && point.civilStartTime.date;
+                            if (!date) return;
+                            const value = Number(valueFromPoint(point));
+                            if (!Number.isFinite(value) || value <= 0) return;
+                            const iso = `${date.year}-${pad2(date.month)}-${pad2(date.day)}`;
+                            const f = fitness[iso] || (fitness[iso] = {});
+                            f[key] = Math.round(value * 10) / 10;
+                            f[`src_${key}`] = "google";
+                        });
+                    } catch (e) {
+                        if (e.message === "expired") throw e;
+                        console.error(`Google Health ${label} sync failed`, e);
+                        notes.push(`Health ${label} unavailable (${e.message})`);
+                    }
+                };
+
+                await Promise.all([
+                    syncDailyMetric("heart-rate", "heartRate", "heart rate", (point) => point.heartRate && point.heartRate.beatsPerMinuteAvg),
+                    syncDailyMetric("blood-glucose", "bloodGlucose", "blood glucose", (point) => point.bloodGlucose && point.bloodGlucose.bloodGlucoseMilligramsPerDeciliterAvg),
+                    syncDailyMetric("core-body-temperature", "bodyTemperature", "body temperature", (point) => point.coreBodyTemperature && point.coreBodyTemperature.temperatureCelsiusAvg),
+                    syncDailyMetric("hydration-log", "water", "water", (point) => point.hydrationLog && point.hydrationLog.amountConsumed && point.hydrationLog.amountConsumed.millilitersSum)
+                ]);
+
+                try {
+                    const since = isoFromUTC(t0 - 13 * DAY_MS);
+                    const oxygen = await gfetch(`https://health.googleapis.com/v4/users/me/dataTypes/daily-oxygen-saturation/dataPoints:reconcile?filter=${encodeURIComponent(`daily_oxygen_saturation.date >= "${since}"`)}`);
+                    (oxygen.dataPoints || []).forEach((point) => {
+                        const reading = point.dailyOxygenSaturation;
+                        const date = reading && reading.date;
+                        const value = Number(reading && reading.averagePercentage);
+                        if (!date || !Number.isFinite(value) || value <= 0) return;
+                        const iso = `${date.year}-${pad2(date.month)}-${pad2(date.day)}`;
+                        const f = fitness[iso] || (fitness[iso] = {});
+                        f.oxygenSaturation = Math.round(value * 10) / 10;
+                        f.src_oxygenSaturation = "google";
+                    });
+                } catch (e) {
+                    if (e.message === "expired") throw e;
+                    console.error("Google Health oxygen saturation sync failed", e);
+                    notes.push(`Health oxygen saturation unavailable (${e.message})`);
+                }
+            }
+
             if (FIT_ON && (!stepsOk || !sleepOk)) await syncFit(notes, !stepsOk, !sleepOk, true);
 
             saveFit();
             const now = new Date();
             setFitStatus(`[v5 ${FIT_ON ? "fit" : "health"}] Synced at ${pad2(now.getHours())}:${pad2(now.getMinutes())}${notes.length ? `. Skipped: ${notes.join(", ")}` : ""}`, notes.length ? "warn" : "good");
         } catch (e) {
-            setFitStatus(e.message === "expired" ? "Google session ended. Press Connect Google Health to link again." : `Google sync failed: ${e.message}`, "bad");
+            const accountNotLinked = /account[_ ]not[_ ]linked/i.test(e.message);
+            if (accountNotLinked) sessionStorage.removeItem("lifetrack-gtoken");
+            setFitStatus(e.message === "expired"
+                ? "Google session ended. Press Connect Google Health to link again."
+                : accountNotLinked
+                    ? "Open Google Health on this same Google account, finish linking it, then connect again."
+                    : `Google sync failed: ${e.message}`, "bad");
         } finally {
             syncing = false;
             renderStats();
@@ -1920,11 +1999,14 @@
             include_granted_scopes: false,
             callback: (resp) => {
                 if (resp.error) { toast(`Google connection stopped: ${resp.error}`); return; }
-                const need = FIT_ON ? "fitness.activity.read" : "activity_and_fitness";
-                if (resp.scope && !resp.scope.includes(need)) {
+                const requiredScopes = FIT_ON
+                    ? ["https://www.googleapis.com/auth/fitness.activity.read"]
+                    : HEALTH_SCOPES.split(" ");
+                const grantedScopes = new Set(String(resp.scope || "").split(/\s+/));
+                if (resp.scope && !requiredScopes.every((scope) => grantedScopes.has(scope))) {
                     sessionStorage.removeItem("lifetrack-gtoken");
-                    setFitStatus("Steps permission was not ticked on the Google screen. Press Connect again and tick ALL boxes.", "bad");
-                    toast("Tick all permission boxes on the Google screen.");
+                    setFitStatus("Some Google Health permissions were not granted. Connect again and approve each requested data type.", "bad");
+                    toast("Approve all requested Google Health data permissions.");
                     return;
                 }
                 sessionStorage.setItem("lifetrack-gtoken", JSON.stringify({ token: resp.access_token, exp: Date.now() + (Number(resp.expires_in || 3600) - 60) * 1000, scopes: HEALTH_SCOPES }));
