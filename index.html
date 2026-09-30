@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login · LifeTrack</title>
+    <meta name="theme-color" content="#eef3ff">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%233b82f6'/%3E%3Cstop offset='1' stop-color='%230891b2'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='38' font-family='Arial,sans-serif' font-weight='800' font-size='26' letter-spacing='-1' text-anchor='middle' fill='%23ffffff'%3ELT%3C/text%3E%3Crect x='14' y='49' width='8' height='6' rx='1.5' fill='%23bfe3ff'/%3E%3Crect x='28' y='44' width='8' height='11' rx='1.5' fill='%23bfe3ff'/%3E%3Crect x='42' y='38' width='8' height='17' rx='1.5' fill='%23eafcff'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="dashboard.css">
+    <link rel="stylesheet" href="auth.css">
+</head>
+<body class="auth-body">
+
+    <button type="button" class="auth-theme-toggle" id="authThemeToggle" aria-label="Toggle dark mode">🌙</button>
+
+    <main class="auth-card">
+        <div class="auth-logo">
+            <div class="logo-box">
+                <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LifeTrack logo">
+                    <text x="50" y="56" text-anchor="middle" font-family="Arial, 'Segoe UI', sans-serif" font-weight="800" font-size="44" letter-spacing="-3" fill="#ffffff">LT</text>
+                    <g opacity="0.92">
+                        <rect x="24" y="80" width="11" height="9" rx="2" fill="#bfe3ff"/>
+                        <rect x="44.5" y="73" width="11" height="16" rx="2" fill="#bfe3ff"/>
+                        <rect x="65" y="64" width="11" height="25" rx="2" fill="#eafcff"/>
+                    </g>
+                </svg>
+            </div>
+            <div>
+                <h1>LifeTrack</h1>
+                <p>Build your life.</p>
+            </div>
+        </div>
+
+        <div class="auth-banner" id="authBanner" style="display:none"></div>
+
+        <h2 id="authTitle">Welcome back</h2>
+        <p class="auth-sub" id="authSub">Log in to keep your habit streaks going.</p>
+
+        <div class="auth-error" id="authError">Please enter your name to continue.</div>
+
+        <button type="button" class="auth-google" id="googleBtn">
+            <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.6 5.9c4.4-4.1 7-10.1 7-17.6z"/><path fill="#FBBC05" d="M10.5 28.7A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.7l-7.9-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 12-2.1 16-5.8l-7.6-5.9c-2.1 1.4-4.9 2.3-8.4 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
+            Continue with Google
+        </button>
+        <div class="auth-divider"><span>or use a name</span></div>
+
+        <form id="authForm" novalidate>
+            <div class="auth-field">
+                <label for="authName">Full name</label>
+                <input id="authName" type="text" placeholder="e.g. Suraj Shukla" autocomplete="name" required>
+            </div>
+
+            <div class="auth-field">
+                <label for="authEmail">Email <span style="font-weight:400">(optional)</span></label>
+                <input id="authEmail" type="email" placeholder="you@example.com" autocomplete="email">
+            </div>
+
+            <div class="auth-row">
+                <label class="auth-remember">
+                    <input type="checkbox" id="authRemember" checked>
+                    Remember me
+                </label>
+                <span id="authModeSwitch" style="cursor:pointer; color:var(--primary); font-weight:700;">New here? Create account</span>
+            </div>
+
+            <button type="submit" class="primary-button auth-submit" id="authSubmitBtn">Log In</button>
+            <button type="button" class="secondary-button auth-guest" id="guestBtn">Continue as Guest</button>
+        </form>
+    </main>
+
+    <footer class="auth-footer">© <strong>LT Series</strong> — this device only, no data leaves your browser.</footer>
+
+<script src="config.js"></script>
+<script>
+(function () {
+    "use strict";
+
+    // ---- theme (shared "lifetrack-theme" key with the dashboard) ----
+    const themeBtn = document.getElementById("authThemeToggle");
+
+    function setTheme(isDark) {
+        document.body.classList.toggle("dark", isDark);
+        themeBtn.textContent = isDark ? "☀" : "🌙";
+        localStorage.setItem("lifetrack-theme", isDark ? "dark" : "light");
+    }
+    themeBtn.addEventListener("click", () => setTheme(!document.body.classList.contains("dark")));
+    setTheme(localStorage.getItem("lifetrack-theme") === "dark");
+
+    // ---- already logged in? let them jump back in, but don't force it ----
+    const existingUser = JSON.parse(localStorage.getItem("lifetrack-user") || "null");
+    if (existingUser && existingUser.name) {
+        const banner = document.getElementById("authBanner");
+        banner.textContent = "";
+        const strong = document.createElement("strong");
+        strong.textContent = existingUser.name;
+        const link = document.createElement("a");
+        link.href = "dashboard.html";
+        link.textContent = "go to Dashboard";
+        link.style.cssText = "color:var(--primary-strong); font-weight:700;";
+        banner.append("Logged in as ", strong, " — ", link, ", or log in below as someone else.");
+        banner.style.display = "block";
+    }
+
+    // ---- login / create-account toggle (cosmetic — both just save + redirect) ----
+    const title = document.getElementById("authTitle");
+    const sub = document.getElementById("authSub");
+    const submitBtn = document.getElementById("authSubmitBtn");
+    const modeSwitch = document.getElementById("authModeSwitch");
+    let isSignup = false;
+
+    modeSwitch.addEventListener("click", () => {
+        isSignup = !isSignup;
+        if (isSignup) {
+            title.textContent = "Create your account";
+            sub.textContent = "Set up LifeTrack to start tracking your habits.";
+            submitBtn.textContent = "Create Account";
+            modeSwitch.textContent = "Already have an account? Log in";
+        } else {
+            title.textContent = "Welcome back";
+            sub.textContent = "Log in to keep your habit streaks going.";
+            submitBtn.textContent = "Log In";
+            modeSwitch.textContent = "New here? Create account";
+        }
+    });
+
+    // ---- prefill remembered name (from a previous logout) ----
+    const rememberedName = localStorage.getItem("lifetrack-remember-name");
+    if (rememberedName) document.getElementById("authName").value = rememberedName;
+
+    const form = document.getElementById("authForm");
+    const errorBox = document.getElementById("authError");
+
+    // uid decides which private data slot this person gets in this browser
+    function login(name, email, extra) {
+        const cleanName = name.trim();
+        const user = Object.assign({ name: cleanName, email: email.trim() }, extra || {});
+        if (!user.uid) user.uid = "n_" + cleanName.toLowerCase().replace(/\s+/g, " ");
+        localStorage.setItem("lifetrack-user", JSON.stringify(user));
+        if (document.getElementById("authRemember").checked) {
+            localStorage.setItem("lifetrack-remember-name", cleanName);
+        } else {
+            localStorage.removeItem("lifetrack-remember-name");
+        }
+        window.location.href = "dashboard.html";
+    }
+
+    form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const name = document.getElementById("authName").value;
+        const email = document.getElementById("authEmail").value;
+
+        if (!name.trim()) {
+            errorBox.textContent = "Please enter your name to continue.";
+            errorBox.classList.add("show");
+            document.getElementById("authName").focus();
+            return;
+        }
+        errorBox.classList.remove("show");
+        login(name, email);
+    });
+
+    document.getElementById("guestBtn").addEventListener("click", () => {
+        login("Guest", "", { uid: "guest" });
+    });
+
+    // ---- Google sign-in (Client ID lives in config.js, users never see it) ----
+    const CFG = window.LT_CONFIG || {};
+    const GID = CFG.GOOGLE_CLIENT_ID || "";
+    const gReady = /^[0-9]+-.+\.apps\.googleusercontent\.com$/.test(GID);
+
+    function showError(text) {
+        errorBox.textContent = text;
+        errorBox.classList.add("show");
+    }
+
+    function loadGIS() {
+        return new Promise((resolve, reject) => {
+            if (window.google && google.accounts && google.accounts.oauth2) { resolve(); return; }
+            const s = document.createElement("script");
+            s.src = "https://accounts.google.com/gsi/client";
+            s.async = true;
+            s.onload = () => resolve();
+            s.onerror = () => reject(new Error("Could not load Google sign-in. Check your internet connection."));
+            document.head.appendChild(s);
+        });
+    }
+
+    // preload so the Google window opens instantly on tap (needed on phones)
+    if (gReady && location.protocol !== "file:") loadGIS().catch(() => {});
+
+    document.getElementById("googleBtn").addEventListener("click", async () => {
+        if (location.protocol === "file:") {
+            showError("Google login works on the online website, not from a file on your computer.");
+            return;
+        }
+        if (!gReady) {
+            showError("Google login is not set up yet. (Site owner: add the Client ID in config.js.)");
+            return;
+        }
+        try { await loadGIS(); } catch (e) { showError(e.message); return; }
+        const client = google.accounts.oauth2.initTokenClient({
+            client_id: GID,
+            scope: "openid email profile",
+            callback: async (resp) => {
+                if (resp.error) { showError(`Google sign-in was cancelled or blocked (${resp.error}).`); return; }
+                try {
+                    const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${resp.access_token}` } });
+                    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                    const u = await r.json();
+                    login(u.name || u.email || "Google user", u.email || "", {
+                        uid: "g_" + (u.sub || u.email),
+                        picture: u.picture || "",
+                        provider: "google"
+                    });
+                } catch (e) {
+                    showError(`Signed in, but Google would not share your profile (${e.message}).`);
+                }
+            },
+            error_callback: () => showError("The Google window was closed or blocked. Allow pop-ups for this site and try again.")
+        });
+        client.requestAccessToken({ prompt: "select_account" });
+    });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LifeTrack Dashboard</title>
+    <meta name="theme-color" content="#0b1730">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%233b82f6'/%3E%3Cstop offset='1' stop-color='%230891b2'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='38' font-family='Arial,sans-serif' font-weight='800' font-size='26' letter-spacing='-1' text-anchor='middle' fill='%23ffffff'%3ELT%3C/text%3E%3Crect x='14' y='49' width='8' height='6' rx='1.5' fill='%23bfe3ff'/%3E%3Crect x='28' y='44' width='8' height='11' rx='1.5' fill='%23bfe3ff'/%3E%3Crect x='42' y='38' width='8' height='17' rx='1.5' fill='%23eafcff'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+<div class="app">
+    <aside class="sidebar">
+        <div class="logo" id="logoArea">
+            <button type="button" class="logo-btn" id="logoBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="profileMenu" title="Profile &amp; account"><span class="logo-box"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LifeTrack logo">
+                    <text x="50" y="56" text-anchor="middle" font-family="Arial, 'Segoe UI', sans-serif" font-weight="800" font-size="44" letter-spacing="-3" fill="#ffffff">LT</text>
+                    <g opacity="0.92">
+                        <rect x="24" y="80" width="11" height="9" rx="2" fill="#bfe3ff"/>
+                        <rect x="44.5" y="73" width="11" height="16" rx="2" fill="#bfe3ff"/>
+                        <rect x="65" y="64" width="11" height="25" rx="2" fill="#eafcff"/>
+                    </g>
+                </svg></span></button>
+            <div class="logo-text">
+                <h2>LifeTrack</h2>
+                <p>Build your life.</p>
+            </div>
+        </div>
+
+        <nav class="navigation">
+            <button type="button" class="nav-item active" data-section="dashboard">
+                <span class="nav-icon">📊</span>
+                <span class="nav-text">Dashboard</span>
+            </button>
+            <button type="button" class="nav-item" data-section="habits">
+                <span class="nav-icon">✓</span>
+                <span class="nav-text">Habits</span>
+            </button>
+            <button type="button" class="nav-item" data-section="goals">
+                <span class="nav-icon">🎯</span>
+                <span class="nav-text">Goals</span>
+            </button>
+            <button type="button" class="nav-item" data-section="analytics">
+                <span class="nav-icon">📈</span>
+                <span class="nav-text">Analytics</span>
+            </button>
+        </nav>
+
+        <div class="sidebar-bottom">
+            <div class="quote-box">
+                <small>DAILY REMINDER</small>
+                <p>Small actions make a big difference.<br>Compounded daily.</p>
+            </div>
+            <button type="button" id="themeToggle" class="theme-button">
+                <span class="nav-icon">🌙</span>
+                <span class="nav-text">Dark Mode</span>
+            </button>
+        </div>
+    </aside>
+
+    <main class="main-content">
+        <header class="topbar">
+            <div>
+                <span class="eyebrow">PERSONAL DEVELOPMENT SYSTEM</span>
+                <h1 id="pageTitle">Daily Progress</h1>
+            </div>
+
+            <div class="top-actions">
+                <select id="monthSelect">
+                    <option>January</option>
+                    <option>February</option>
+                    <option>March</option>
+                    <option>April</option>
+                    <option>May</option>
+                    <option>June</option>
+                    <option>July</option>
+                    <option>August</option>
+                    <option>September</option>
+                    <option>October</option>
+                    <option>November</option>
+                    <option>December</option>
+                </select>
+
+                <select id="yearSelect">
+                    <option>2025</option>
+                    <option>2026</option>
+                    <option>2027</option>
+                    <option>2028</option>
+                    <option>2029</option>
+                    <option>2030</option>
+                </select>
+
+                <button type="button" class="user-info user-chip" id="userChip" aria-haspopup="menu" aria-controls="profileMenu" title="Profile &amp; account">
+                    <span id="userName" class="user-name">User</span>
+                    <span id="profileLetter" class="profile">U</span>
+                </button>
+            </div>
+        </header>
+
+        <section id="dashboard" class="section active-section">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span class="stat-title">NUMBER OF HABITS</span>
+                    <h2 id="habitCount">0</h2>
+                    <p>Active habits</p>
+                    <div id="habitLegend" class="habit-legend"></div>
+                </div>
+
+                <div class="stat-card">
+                    <span class="stat-title">COMPLETED HABITS</span>
+                    <h2 id="completedCount">0</h2>
+                    <p>This month</p>
+                    <div id="completedSpark" class="spark-wrap"></div>
+                    <div id="completedChips" class="chip-row"></div>
+                </div>
+
+                <div class="stat-card progress-card">
+                    <span class="stat-title">OVERALL PROGRESS</span>
+                    <div id="progressGauge" class="gauge-wrap"></div>
+                    <p id="progressFeedback" class="gauge-feedback">Keep building momentum</p>
+                </div>
+            </div>
+
+            <div class="main-grid">
+                <div class="panel habit-panel">
+                    <div class="panel-header">
+                        <div>
+                            <span class="eyebrow">CONSISTENCY</span>
+                            <h2>Habit Tracker</h2>
+                        </div>
+                        <button type="button" id="resetBtn" class="secondary-button">Reset Month</button>
+                    </div>
+
+                    <div class="table-wrapper">
+                        <table class="habit-table">
+                            <thead id="calendarHead"></thead>
+                            <tbody id="habitBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="panel analysis-panel">
+                    <div class="panel-header">
+                        <div>
+                            <span class="eyebrow">ANALYSIS</span>
+                            <h2>Goal vs Progress</h2>
+                        </div>
+                    </div>
+                    <div id="goalAnalysis" class="goal-analysis"></div>
+                    <div id="weekStrip" class="week-strip"></div>
+                </div>
+            </div>
+
+            <div class="bottom-grid">
+                <div class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <span class="eyebrow">PERFORMANCE</span>
+                            <h2>Daily Completion</h2>
+                        </div>
+                    </div>
+                    <div id="completionChart" class="chart-svg-wrap"></div>
+                    <div id="completionChips" class="chip-row"></div>
+                    <h3 class="sub-head">Average by weekday</h3>
+                    <div id="weekdayBars" class="wd-bars"></div>
+                </div>
+
+                <div class="panel reminder-panel">
+                    <div class="panel-header">
+                        <div>
+                            <span class="eyebrow">DAILY REMINDER</span>
+                            <h2>Today's Plan</h2>
+                        </div>
+                        <button type="button" id="bodyEditBtn" class="secondary-button">Body Profile</button>
+                    </div>
+                    <div id="dailyReminder" class="daily-reminder"></div>
+                </div>
+            </div>
+
+            <div class="trio-grid">
+                <div class="panel">
+                    <div class="panel-header"><div><span class="eyebrow">THIS MONTH</span><h2>Habit Balance</h2></div></div>
+                    <div id="habitRadar"></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header"><div><span class="eyebrow">LAST 7 DAYS</span><h2>Life Balance</h2></div></div>
+                    <div id="lifeRadar"></div>
+                    <div id="lifeLegend" class="legend-grid"></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header"><div><span class="eyebrow">MOMENTUM</span><h2>Current Streaks</h2></div></div>
+                    <div id="streakList" class="streak-list"></div>
+                </div>
+            </div>
+
+            <div class="duo-grid">
+                <div class="panel fit-panel">
+                    <div class="panel-header">
+                        <div><span class="eyebrow">BODY &amp; ACTIVITY</span><h2>Fitness Today</h2></div>
+                        <div id="fitActions" class="fit-actions"></div>
+                    </div>
+                    <div id="fitBody"></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header"><div><span class="eyebrow">REWARDS</span><h2>Achievements</h2></div></div>
+                    <div id="badgeGrid" class="badge-grid"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="habits" class="section">
+            <div class="page-card">
+                <span class="eyebrow">YOUR SYSTEM</span>
+                <h2>Build Your Habits</h2>
+                <p>Add, remove and track the habits that matter to your life.</p>
+
+                <div class="add-habit">
+                    <input id="newHabitInput" type="text" placeholder="Example: Meditation" autocomplete="off">
+                    <button type="button" id="addHabitBtn" class="primary-button">Add Habit</button>
+                </div>
+
+                <div id="habitManageList" class="habit-cards"></div>
+            </div>
+
+            <div class="duo-grid page-gap">
+                <div class="page-card">
+                    <span class="eyebrow">SHARE OF EFFORT</span>
+                    <h2>Where your check-ins go</h2>
+                    <div id="habitDonut"></div>
+                </div>
+                <div class="page-card">
+                    <span class="eyebrow">THIS MONTH</span>
+                    <h2>Habit shape</h2>
+                    <div id="habitRadar2"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="goals" class="section">
+            <div class="page-card">
+                <span class="eyebrow">LONG-TERM PROGRESS</span>
+                <h2>Goals</h2>
+                <p>Pick a habit (or all of them) and a monthly target. Progress is counted from your real check-ins.</p>
+                <form id="goalForm" class="goal-form" novalidate>
+                    <input id="goalName" type="text" maxlength="40" placeholder="Goal name, e.g. Run more" autocomplete="off">
+                    <select id="goalHabit" aria-label="Habit for this goal"></select>
+                    <label class="goal-range">Target <input id="goalTarget" type="range" min="10" max="100" step="5" value="70"><output id="goalTargetOut">70%</output></label>
+                    <button type="submit" class="primary-button">Add goal</button>
+                </form>
+                <div id="goalPageList" class="goal-grid"></div>
+            </div>
+
+            <div class="duo-grid page-gap">
+                <div class="page-card">
+                    <span class="eyebrow">ALL GOALS</span>
+                    <h2>Goal radar</h2>
+                    <div id="goalRadar"></div>
+                </div>
+                <div class="page-card">
+                    <span class="eyebrow">YEARLY VIEW</span>
+                    <h2>Goal progress by month</h2>
+                    <div id="goalYear"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="analytics" class="section">
+            <div class="page-card">
+                <div class="panel-header">
+                    <div><span class="eyebrow">YOUR DATA</span><h2>Analytics</h2></div>
+                    <div class="seg" id="analyticsSeg" role="group" aria-label="Analytics range">
+                        <button type="button" data-view="month" class="active">Monthly</button>
+                        <button type="button" data-view="year">Yearly</button>
+                    </div>
+                </div>
+
+                <div id="anMonth">
+                    <div id="anKpis" class="kpi-grid"></div>
+                    <h3 class="sub-head">Daily trend</h3>
+                    <div id="analyticsChart" class="line-chart-wrap"></div>
+                    <div class="duo-grid inner">
+                        <div><h3 class="sub-head">Calendar heatmap</h3><div id="heatMonth" class="box-soft"></div></div>
+                        <div><h3 class="sub-head">Habit balance</h3><div id="anRadar" class="box-soft"></div></div>
+                    </div>
+                    <h3 class="sub-head">Fitness, last 14 days</h3>
+                    <div id="fitTrend" class="trend-grid"></div>
+                </div>
+
+                <div id="anYear" hidden>
+                    <div id="anYearKpis" class="kpi-grid"></div>
+                    <h3 class="sub-head">Month by month</h3>
+                    <div id="yearlyChart"></div>
+                    <h3 class="sub-head">Every day of the year</h3>
+                    <div id="heatYear" class="box-soft scroll-x"></div>
+                    <div class="duo-grid inner">
+                        <div><h3 class="sub-head">Habit by month</h3><div id="yearMatrix" class="box-soft scroll-x"></div></div>
+                        <div><h3 class="sub-head">Habit balance, whole year</h3><div id="yearRadar" class="box-soft"></div></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+</div>
+
+<div id="profileMenu" class="profile-menu" role="menu" hidden></div>
+<div id="modalRoot"></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+
+<footer class="level-up-footer">
+    <strong>Level Up Every Day 🚀</strong>
+</footer>
+
+<script src="config.js"></script>
+<script src="dashboard.js"></script>
+
+<footer class="lt-footer">©<strong>LT Series</strong></footer>
+</body>
+</html>
