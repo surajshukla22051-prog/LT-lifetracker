@@ -138,20 +138,14 @@
                     </div>
                 </div>
 
-                <div class="panel analysis-panel">
-                    <div class="panel-header">
-                        <div>
-                            <span class="eyebrow">ANALYSIS</span>
-                            <h2>Goal vs Progress</h2>
-                        </div>
-                    </div>
-                    <div id="goalAnalysis" class="goal-analysis"></div>
-                    <div id="weekStrip" class="week-strip"></div>
+                <div class="panel">
+                    <div class="panel-header"><div><span class="eyebrow">MOMENTUM</span><h2>Current Streaks</h2></div></div>
+                    <div id="streakList" class="streak-list"></div>
                 </div>
             </div>
 
             <div class="bottom-grid">
-                <div class="panel">
+                <div class="panel completion-panel">
                     <div class="panel-header">
                         <div>
                             <span class="eyebrow">PERFORMANCE</span>
@@ -162,15 +156,21 @@
                     <div id="completionChips" class="chip-row"></div>
                     <h3 class="sub-head">Average by weekday</h3>
                     <div id="weekdayBars" class="wd-bars"></div>
+                    <div class="focus-session" id="focusSession">
+                        <div class="focus-session-head"><div><span class="eyebrow">FOCUS</span><h3>Focus Session</h3></div><span id="focusState" class="focus-state">Ready</span></div>
+                        <div class="focus-session-main"><output id="focusClock" class="focus-clock" aria-live="polite">25:00</output><div class="focus-length" title="Choose a duration from 1 minute to 24 hours"><label><input id="focusHours" type="number" min="0" max="24" step="1" value="0" inputmode="numeric" aria-label="Focus duration hours"><span>hr</span></label><b aria-hidden="true">:</b><label><input id="focusMinutes" type="number" min="0" max="59" step="1" value="25" inputmode="numeric" aria-label="Focus duration minutes"><span>min</span></label></div></div>
+                        <div class="focus-session-actions"><button type="button" class="primary-button" id="focusToggle">Start</button><button type="button" class="secondary-button" id="focusReset">Reset</button></div>
+                        <small id="focusSummary" class="focus-summary">0 sessions · 0 minutes focused today</small>
+                    </div>
                 </div>
 
                 <div class="panel reminder-panel">
                     <div class="panel-header">
                         <div>
                             <span class="eyebrow">DAILY REMINDER</span>
-                            <h2>Today's Plan</h2>
+                            <h2>Daily Body &amp; Mind Plan</h2>
                         </div>
-                        <button type="button" id="bodyEditBtn" class="secondary-button">Body Profile</button>
+                        <button type="button" id="bodyEditBtn" class="secondary-button">Edit Profile</button>
                     </div>
                     <div id="dailyReminder" class="daily-reminder"></div>
                 </div>
@@ -186,9 +186,15 @@
                     <div id="lifeRadar"></div>
                     <div id="lifeLegend" class="legend-grid"></div>
                 </div>
-                <div class="panel">
-                    <div class="panel-header"><div><span class="eyebrow">MOMENTUM</span><h2>Current Streaks</h2></div></div>
-                    <div id="streakList" class="streak-list"></div>
+                <div class="panel analysis-panel">
+                    <div class="panel-header">
+                        <div>
+                            <span class="eyebrow">ANALYSIS</span>
+                            <h2>Goal vs Progress</h2>
+                        </div>
+                    </div>
+                    <div id="goalAnalysis" class="goal-analysis"></div>
+                    <div id="weekStrip" class="week-strip"></div>
                 </div>
             </div>
 
