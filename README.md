@@ -14,6 +14,8 @@ A static LifeTrack habit-tracking dashboard.
 
 The LifeTrack logo is configured as the site favicon, phone home-screen icon,
 and installable web-app icon through `manifest.webmanifest`.
+The public Privacy Policy and Terms of Service are available in `privacy.html`
+and `terms.html`.
 
 ## Google Login
 
