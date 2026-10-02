@@ -57,8 +57,10 @@ the project and account; it is deprecated and may stop working. Google access
 tokens expire, so sign in with Google again after a session ends to resume cloud
 and health syncing. Data availability depends on the account, connected devices,
 and recorded readings. Successfully imported health readings show **from
-Google**; manually entered values remain separate. Water, focus, mood, and
-unavailable device readings stay manual.
+Google**. The Sleep tile identifies Google-sourced sleep and offers a provider
+sync action; manual sleep entry remains an explicit fallback. Other manually
+entered values remain separate. Water, focus, mood, and unavailable device
+readings stay manual.
 
 If health sync returns HTTP 403, read the full response shown in Fitness Today.
 In Google Health mode, `Could not mint UberMint from GaiaMint` means the Google

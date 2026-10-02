@@ -1859,6 +1859,8 @@ body.dark .radar-area { filter: drop-shadow(0 0 6px var(--primary-glow)); }
 .fit-tile strong { font-size: 13px; }
 .fit-val { color: var(--muted); font-size: 12px; }
 .fit-input { width: 100%; max-width: 130px; height: 34px; font-size: 13px; text-align: center; }
+.fit-source-action { padding: 2px 4px; color: var(--primary-strong); border: 0; background: transparent; font-size: 11px; font-weight: 700; text-decoration: none; cursor: pointer; }
+.fit-source-action:hover { text-decoration: underline; }
 .fit-btns { display: flex; gap: 6px; }
 .fit-btns button { min-width: 34px; height: 34px; padding: 0 10px; color: var(--primary-strong); border: 1px solid var(--line); border-radius: 8px; background: var(--panel); cursor: pointer; font-weight: 700; }
 .fit-btns button[data-water="250"] { flex: 0 0 auto; padding: 0 4px; font-size: 12px; white-space: nowrap; }

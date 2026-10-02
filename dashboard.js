@@ -948,6 +948,7 @@
     let fitStatus = { text: "", kind: "" };
     let syncing = false;
     let healthSyncReady = false;
+    let manualSleepEditing = false;
 
     function esc(s) {
         return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2032,21 +2033,34 @@
         const f = fitness[iso] || {};
         const tg = dailyTargets(ctx.life);
         const linked = Boolean(googleToken());
+        const providerName = FIT_ON ? "Google Fit" : "Google Health";
+        const providerSetupAction = FIT_ON ? "" : `<a class="secondary-button" href="https://fitbit.google.com/auth/signup" target="_blank" rel="noopener noreferrer">Set up Google Health</a>`;
 
         acts.innerHTML = !HEALTH_ON ? ""
             : linked && healthSyncReady
             ? `<span class="chip good">● Live from Google</span><button type="button" class="secondary-button" id="gSync">Sync now</button>`
             : linked
-            ? `<span class="chip">Google sign-in active · health sync needs attention</span><button type="button" class="secondary-button" id="gSync">Retry sync</button><a class="secondary-button" href="https://fitbit.google.com/auth/signup" target="_blank" rel="noopener noreferrer">Set up Google Health</a>`
-            : `<span class="chip">Google health data not connected</span><a class="secondary-button" href="index.html">Reconnect Google</a><a class="secondary-button" href="https://fitbit.google.com/auth/signup" target="_blank" rel="noopener noreferrer">Set up Google Health</a>`;
+            ? `<span class="chip">Google sign-in active · ${providerName} sync needs attention</span><button type="button" class="secondary-button" id="gSync">Retry sync</button>${providerSetupAction}`
+            : `<span class="chip">${providerName} data not connected</span><a class="secondary-button" href="index.html">Reconnect Google</a>${providerSetupAction}`;
 
         const src = (k) => (f[`src_${k}`] === "google" ? `<small class="src">from Google</small>` : "");
-        const tile = (key, label, value, goal, color, text, control) => {
+        const tile = (key, label, value, goal, color, text, control, showSource = true) => {
             const p = goal ? clamp((value / goal) * 100, 0, 100) : 0;
-            return `<div class="fit-tile">${ringSVG(p, { size: 84, stroke: 8, color })}<strong>${label}</strong><span class="fit-val">${text}</span>${control}${src(key)}</div>`;
+            return `<div class="fit-tile">${ringSVG(p, { size: 84, stroke: 8, color })}<strong>${label}</strong><span class="fit-val">${text}</span>${control}${showSource ? src(key) : ""}</div>`;
         };
         const moods = ["😞", "🙁", "😐", "🙂", "😄"];
         const steps = Number(f.steps) || 0;
+        const sleepFromGoogle = f.src_sleep === "google";
+        const sleepSource = providerName;
+        const sleepGoogleAction = linked
+            ? `<button type="button" class="fit-source-action" data-sleep-action="sync">Sync ${sleepSource}</button>`
+            : `<a class="fit-source-action" href="index.html">Connect ${sleepSource}</a>`;
+        const sleepInput = `<input class="fit-input" type="number" min="0" max="24" step="0.5" inputmode="decimal" data-field="sleep" value="${f.sleep || ""}" placeholder="Hours slept" aria-label="Hours slept">`;
+        const sleepControl = sleepFromGoogle
+            ? manualSleepEditing
+                ? `${sleepInput}<small class="src">${sleepSource} reading · editing replaces it</small><button type="button" class="fit-source-action" data-sleep-action="cancel">Keep Google value</button>`
+                : `<small class="src">Synced from ${sleepSource}</small><button type="button" class="fit-source-action" data-sleep-action="manual">Enter manually</button>`
+            : `${sleepInput}${FIT_ON && HEALTH_ON ? `<small class="src">Waiting for ${sleepSource} sleep data</small>${sleepGoogleAction}` : ""}`;
         const hasProfile = Boolean(bodyProfile && bodyProfile.weight > 0 && bodyProfile.height > 0);
         const strideMeters = hasProfile ? (bodyProfile.height / 100) * 0.415 : 0.72;
         const distanceKm = Math.round((steps * strideMeters) / 10) / 100;
@@ -2059,8 +2073,7 @@
                 `<input class="fit-input" type="number" min="0" max="100000" step="100" inputmode="numeric" data-field="steps" value="${f.steps || ""}" placeholder="Set steps" aria-label="Steps today">`)}
             ${tile("water", "Water", f.water || 0, tg.water, "var(--accent)", `${((f.water || 0) / 1000).toFixed(2)} / ${(tg.water / 1000).toFixed(1)} L`,
                 `<div class="fit-btns"><button type="button" data-water="-250" aria-label="Remove 250 ml">−</button><button type="button" data-water="250" aria-label="Add 250 ml">+250 ml</button></div>`)}
-            ${tile("sleep", "Sleep", f.sleep || 0, tg.sleep, "#a78bfa", `${(f.sleep || 0).toFixed(1)} / ${tg.sleep} h`,
-                `<input class="fit-input" type="number" min="0" max="24" step="0.5" inputmode="decimal" data-field="sleep" value="${f.sleep || ""}" placeholder="Hours slept" aria-label="Hours slept">`)}
+            ${tile("sleep", "Sleep", f.sleep || 0, tg.sleep, "#a78bfa", `${(f.sleep || 0).toFixed(1)} / ${tg.sleep} h`, sleepControl, false)}
             ${tile("active", "Focus", f.active || 0, tg.active, "var(--zone-orange)", `${f.active || 0} / ${tg.active} min`,
                 `<input class="fit-input" type="number" min="0" max="600" step="5" inputmode="numeric" data-field="active" value="${f.active || ""}" placeholder="Minutes" aria-label="Focus minutes">`)}
         </div>
@@ -2243,6 +2256,7 @@
                 sleepOk = fitStatus.sleepOk;
             }
 
+            if (fitness[isoFromUTC(t0)] && fitness[isoFromUTC(t0)].src_sleep === "google") manualSleepEditing = false;
             saveFit();
             healthSyncReady = stepsOk && sleepOk;
             const now = new Date();
@@ -2461,8 +2475,15 @@
     document.getElementById("fitBody").addEventListener("click", (e) => {
         const w = e.target.closest("[data-water]");
         const mo = e.target.closest("[data-mood]");
+        const sleepAction = e.target.closest("[data-sleep-action]");
         const iso = isoFromUTC(todayUTC());
-        if (w) {
+        if (sleepAction) {
+            if (sleepAction.dataset.sleepAction === "sync") syncGoogle();
+            else {
+                manualSleepEditing = sleepAction.dataset.sleepAction === "manual";
+                renderStats();
+            }
+        } else if (w) {
             const cur = (fitness[iso] || {}).water || 0;
             setFit("water", Math.max(0, cur + Number(w.dataset.water)));
         } else if (mo) {
