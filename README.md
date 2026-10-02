@@ -12,6 +12,9 @@ A static LifeTrack habit-tracking dashboard.
 
 [Open LifeTrack](https://surajshukla22051-prog.github.io/LT-lifetracker/)
 
+The LifeTrack logo is configured as the site favicon, phone home-screen icon,
+and installable web-app icon through `manifest.webmanifest`.
+
 ## Google Login
 
 The Google button on `index.html` signs in and requests Drive app-data access
