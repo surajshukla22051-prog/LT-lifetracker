@@ -2035,7 +2035,7 @@
         acts.innerHTML = !HEALTH_ON ? ""
             : linked
             ? `<span class="chip good">● Live from Google</span><button type="button" class="secondary-button" id="gSync">Sync now</button>`
-            : `<span class="chip">Sign in with Google for health data</span>`;
+            : `<span class="chip">Google health data not connected</span><a class="secondary-button" href="index.html">Reconnect Google</a>`;
 
         const src = (k) => (f[`src_${k}`] === "google" ? `<small class="src">from Google</small>` : "");
         const tile = (key, label, value, goal, color, text, control) => {
@@ -2066,7 +2066,7 @@
             ${metricTile("Distance", distanceKm.toFixed(2), "km estimated", tg.steps ? (steps / tg.steps) * 100 : 0, "var(--primary)", `${distanceKm.toFixed(2)} kilometers estimated from ${steps} steps`, hasProfile ? "steps + plan height" : "steps · average stride")}
         </div>
         <div class="mood-row"><span>How do you feel today?</span><div>${moods.map((e, i) => `<button type="button" class="mood-btn${f.mood === i + 1 ? " on" : ""}" data-mood="${i + 1}" aria-label="Mood ${i + 1} of 5" aria-pressed="${f.mood === i + 1}">${e}</button>`).join("")}</div></div>
-        <p id="fitStatus" class="fit-status ${fitStatus.kind}">${esc(fitStatus.text || (linked ? "Connected. Google readings refresh every minute when available." : (HEALTH_ON ? "Google Health access is requested when you sign in with Google." : "Log your steps, water, sleep, focus and health readings by hand.")))}</p>`;
+        <p id="fitStatus" class="fit-status ${fitStatus.kind}">${esc(fitStatus.text || (linked ? "Connected. Google readings refresh every minute when available." : (HEALTH_ON ? "Reconnect Google and allow the health permissions to import readings." : "Log your steps, water, sleep, focus and health readings by hand.")))}</p>`;
         animateRings(box);
     }
 
@@ -2521,9 +2521,15 @@
         document.getElementById("anYear").hidden = analyticsView !== "year";
     });
 
-    // "live" fitness: refresh every minute while the tab is visible and Google is linked
-    setInterval(() => { if (document.visibilityState === "visible" && googleToken()) syncGoogle(); }, 60000);
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && googleToken()) syncGoogle(); });
+    // Refresh Drive changes so open devices pick up habit and fitness edits from each other.
+    function refreshGoogleData() {
+        if (driveToken()) syncCloud();
+        if (googleToken()) syncGoogle();
+    }
+    setInterval(() => { if (document.visibilityState === "visible") refreshGoogleData(); }, 60000);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") refreshGoogleData();
+    });
     if (HEALTH_ON && location.protocol !== "file:") loadGIS().catch(() => {});
 
     document.querySelectorAll(".nav-item").forEach((button) => {
