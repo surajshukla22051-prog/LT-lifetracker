@@ -922,14 +922,17 @@
     const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const PALETTE = ["#4da6ff", "#22d3ee", "#a78bfa", "#f472b6", "#fbbf24", "#34d399", "#fb7185", "#60a5fa"];
     const FIT_ON = Boolean(CFG.GOOGLE_FIT);
+    const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
     // Google Health API rejects tokens that also carry old Fit scopes, so only ONE family is ever requested.
-    const HEALTH_SCOPES = (FIT_ON ? [
+    const HEALTH_SCOPES = Boolean(CFG.GOOGLE_FIT) ? [
         "https://www.googleapis.com/auth/fitness.activity.read",
         "https://www.googleapis.com/auth/fitness.sleep.read"
-    ] : [
+    ] : Boolean(CFG.GOOGLE_HEALTH) ? [
         "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
         "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
-    ]).join(" ");
+    ] : [];
+    const LOGIN_SCOPES = ["openid", "email", "profile", DRIVE_SCOPE, ...HEALTH_SCOPES];
+    const GOOGLE_READY = /^[0-9]+-.+\.apps\.googleusercontent\.com$/.test(GID);
 
     let goals = JSON.parse(store.get("goals") || "null") || [
         { id: "g-all", name: "Monthly consistency", habit: "*", target: 80 }
@@ -1851,7 +1854,7 @@
         if (!HEALTH_ON) return null;
         try {
             const t = JSON.parse(sessionStorage.getItem("lifetrack-gtoken") || "null");
-            if (t && t.token && t.exp > Date.now() && t.scopes === HEALTH_SCOPES) return t.token;
+            if (t && t.token && t.exp > Date.now() && t.scopes === HEALTH_SCOPES.join(" ")) return t.token;
         } catch (e) { /* ignore */ }
         return null;
     }
@@ -1869,7 +1872,7 @@
         if (!driveToken()) {
             const status = document.getElementById("fitStatus");
             if (status && currentUser.provider === "google") {
-                status.textContent = "Google sign-in expired. Sign in again from the login page to sync new changes.";
+                status.textContent = "Google sync needs reconnecting. Use Reconnect Google in your profile menu.";
                 status.className = "fit-status warn";
             }
             return;
@@ -1895,13 +1898,13 @@
 
     async function driveRequest(url, options) {
         const token = driveToken();
-        if (!token) throw new Error("Google sign-in expired. Sign in with Google again to sync your data.");
+        if (!token) throw new Error("Google sync needs reconnecting. Use Reconnect Google in your profile menu.");
         const response = await fetch(url, Object.assign({}, options, {
             headers: Object.assign({ Authorization: `Bearer ${token}` }, options && options.headers || {})
         }));
         if (response.status === 401) {
             sessionStorage.removeItem("lifetrack-drive-token");
-            throw new Error("Google sign-in expired. Sign in with Google again to sync your data.");
+            throw new Error("Google sync needs reconnecting. Use Reconnect Google in your profile menu.");
         }
         if (!response.ok) throw new Error(`Google Drive sync failed (HTTP ${response.status}).`);
         return response;
@@ -2041,7 +2044,7 @@
             ? `<span class="chip good">● Live from Google</span><button type="button" class="secondary-button" id="gSync">Sync now</button>`
             : linked
             ? `<span class="chip">Google sign-in active · ${providerName} sync needs attention</span><button type="button" class="secondary-button" id="gSync">Retry sync</button>${providerSetupAction}`
-            : `<span class="chip">${providerName} data not connected</span><a class="secondary-button" href="index.html">Reconnect Google</a>${providerSetupAction}`;
+            : `<span class="chip">${providerName} data not connected</span><button type="button" class="secondary-button" id="gReconnect">Reconnect Google</button>${providerSetupAction}`;
 
         const src = (k) => (f[`src_${k}`] === "google" ? `<small class="src">from Google</small>` : "");
         const tile = (key, label, value, goal, color, text, control, showSource = true) => {
@@ -2054,7 +2057,7 @@
         const sleepSource = providerName;
         const sleepGoogleAction = linked
             ? `<button type="button" class="fit-source-action" data-sleep-action="sync">Sync ${sleepSource}</button>`
-            : `<a class="fit-source-action" href="index.html">Connect ${sleepSource}</a>`;
+            : `<button type="button" class="fit-source-action" data-sleep-action="reconnect">Connect ${sleepSource}</button>`;
         const sleepInput = `<input class="fit-input" type="number" min="0" max="24" step="0.5" inputmode="decimal" data-field="sleep" value="${f.sleep || ""}" placeholder="Hours slept" aria-label="Hours slept">`;
         const sleepControl = sleepFromGoogle
             ? manualSleepEditing
@@ -2287,6 +2290,68 @@
         });
     }
 
+    async function reconnectGoogle() {
+        if (currentUser.provider !== "google") {
+            window.location.href = "index.html";
+            return;
+        }
+        if (!GOOGLE_READY || location.protocol === "file:") {
+            toast("Google reconnect is only available on the LifeTrack website.");
+            return;
+        }
+        try {
+            await loadGIS();
+            const client = google.accounts.oauth2.initTokenClient({
+                client_id: GID,
+                scope: LOGIN_SCOPES.join(" "),
+                include_granted_scopes: false,
+                callback: async (response) => {
+                    if (response.error) {
+                        toast(`Google reconnect was cancelled or blocked (${response.error}).`);
+                        return;
+                    }
+                    try {
+                        const grantedScopes = new Set(String(response.scope || LOGIN_SCOPES.join(" ")).split(/\s+/));
+                        if (!grantedScopes.has(DRIVE_SCOPE)) {
+                            throw new Error("Allow Google Drive app-data access to sync LifeTrack.");
+                        }
+                        const userResponse = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+                            headers: { Authorization: `Bearer ${response.access_token}` }
+                        });
+                        if (!userResponse.ok) throw new Error(`Could not verify your Google account (HTTP ${userResponse.status}).`);
+                        const googleUser = await userResponse.json();
+                        if (`g_${googleUser.sub || googleUser.email}` !== currentUser.uid) {
+                            throw new Error("Choose the same Google account that is already linked to LifeTrack.");
+                        }
+
+                        const expiry = Date.now() + (Number(response.expires_in || 3600) - 60) * 1000;
+                        sessionStorage.setItem("lifetrack-drive-token", JSON.stringify({ token: response.access_token, exp: expiry }));
+                        if (HEALTH_SCOPES.length && HEALTH_SCOPES.every((scope) => grantedScopes.has(scope))) {
+                            sessionStorage.setItem("lifetrack-gtoken", JSON.stringify({
+                                token: response.access_token,
+                                exp: expiry,
+                                scopes: HEALTH_SCOPES.join(" ")
+                            }));
+                        } else {
+                            sessionStorage.removeItem("lifetrack-gtoken");
+                        }
+
+                        toast("Google reconnected. Syncing your data...");
+                        await syncCloud();
+                        if (googleToken()) await syncGoogle();
+                        renderStats();
+                    } catch (error) {
+                        toast(error.message);
+                    }
+                },
+                error_callback: () => toast("The Google window was closed or blocked. Allow pop-ups for this site and try again.")
+            });
+            client.requestAccessToken({ prompt: "" });
+        } catch (error) {
+            toast(error.message);
+        }
+    }
+
     /* ---------- modal + menu ---------- */
 
     function closeModal() { document.getElementById("modalRoot").innerHTML = ""; }
@@ -2398,7 +2463,7 @@
             <div class="pm-list" role="none">
                 <button type="button" role="menuitem" data-act="edit">✏️ Edit profile</button>
                 <button type="button" role="menuitem" data-act="body">⚖️ Body profile</button>
-                ${currentUser.provider === "google" ? `<span class="chip">Google Drive data sync</span><button type="button" role="menuitem" data-act="reauth">🔄 Sign in again for sync</button>` : ""}
+                ${currentUser.provider === "google" ? `<span class="chip">Google Drive data sync</span><button type="button" role="menuitem" data-act="reauth">🔄 Reconnect Google sync</button>` : ""}
                 <hr>
                 <button type="button" role="menuitem" data-act="export">⬇️ Download backup</button>
                 <button type="button" role="menuitem" data-act="import">⬆️ Restore backup</button>
@@ -2447,7 +2512,7 @@
             renderDailyReminder(lastLife || computeLifetime());
             dailyReminder.scrollIntoView({ behavior: "smooth", block: "center" });
         } else if (act === "gsync") syncGoogle();
-        else if (act === "reauth") window.location.href = "index.html";
+        else if (act === "reauth") reconnectGoogle();
         else if (act === "export") exportData();
         else if (act === "import") document.getElementById("importFile").click();
         else if (act === "reset") {
@@ -2470,6 +2535,7 @@
         const b = e.target.closest("button");
         if (!b) return;
         if (b.id === "gSync") syncGoogle();
+        else if (b.id === "gReconnect") reconnectGoogle();
     });
 
     document.getElementById("fitBody").addEventListener("click", (e) => {
@@ -2479,6 +2545,7 @@
         const iso = isoFromUTC(todayUTC());
         if (sleepAction) {
             if (sleepAction.dataset.sleepAction === "sync") syncGoogle();
+            else if (sleepAction.dataset.sleepAction === "reconnect") reconnectGoogle();
             else {
                 manualSleepEditing = sleepAction.dataset.sleepAction === "manual";
                 renderStats();
