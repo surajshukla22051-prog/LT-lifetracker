@@ -1849,9 +1849,10 @@ body.dark .radar-area { filter: drop-shadow(0 0 6px var(--primary-glow)); }
 /* ---------- fitness ---------- */
 .fit-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .fit-panel { container-type: inline-size; }
-.fit-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+#fitBody { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+#fitBody > .fit-grid, #fitBody > .vitals-grid { display: contents; }
+#fitBody > .mood-row, #fitBody > .fit-status { grid-column: 1 / -1; margin-top: 0 !important; }
 .fit-tile { display: grid; justify-items: center; gap: 6px; padding: 14px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-soft); text-align: center; }
-.vitals-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
 .vital-tile { display: grid; justify-items: center; align-content: start; gap: 8px; min-width: 0; padding: 14px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-soft); text-align: center; cursor: text; }
 .vital-tile strong { font-size: 13px; }
 .vital-tile .ring-svg { max-width: 100%; }
@@ -1874,11 +1875,6 @@ body.dark .radar-area { filter: drop-shadow(0 0 6px var(--primary-glow)); }
 .fit-status.good { color: var(--zone-green); }
 .fit-status.warn { color: var(--zone-orange); }
 .fit-status.bad { color: var(--zone-red); }
-@container (max-width: 600px) {
-    #fitBody { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-    #fitBody > .fit-grid, #fitBody > .vitals-grid { display: contents; }
-    #fitBody > .mood-row, #fitBody > .fit-status { grid-column: 1 / -1; margin-top: 0 !important; }
-}
 @container (max-width: 340px) { #fitBody { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @container (max-width: 240px) { #fitBody { grid-template-columns: 1fr; } }
 
