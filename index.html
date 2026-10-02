@@ -68,7 +68,7 @@
         </form>
     </main>
 
-    <footer class="auth-footer">© <strong>LT Series</strong> — this device only, no data leaves your browser.</footer>
+    <footer class="auth-footer">Google sign-in keeps your LifeTrack data in your private Google Drive app storage. Name and guest accounts stay on this device.</footer>
 
 <script src="config.js"></script>
 <script>
@@ -134,6 +134,10 @@
     function login(name, email, extra) {
         const cleanName = name.trim();
         const user = Object.assign({ name: cleanName, email: email.trim() }, extra || {});
+        if (user.provider !== "google") {
+            sessionStorage.removeItem("lifetrack-drive-token");
+            sessionStorage.removeItem("lifetrack-gtoken");
+        }
         if (!user.uid) user.uid = "n_" + cleanName.toLowerCase().replace(/\s+/g, " ");
         localStorage.setItem("lifetrack-user", JSON.stringify(user));
         if (document.getElementById("authRemember").checked) {
@@ -166,6 +170,15 @@
     // ---- Google sign-in (Client ID lives in config.js, users never see it) ----
     const CFG = window.LT_CONFIG || {};
     const GID = CFG.GOOGLE_CLIENT_ID || "";
+    const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+    const HEALTH_SCOPES = Boolean(CFG.GOOGLE_FIT) ? [
+        "https://www.googleapis.com/auth/fitness.activity.read",
+        "https://www.googleapis.com/auth/fitness.sleep.read"
+    ] : Boolean(CFG.GOOGLE_HEALTH) ? [
+        "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
+        "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
+    ] : [];
+    const LOGIN_SCOPES = ["openid", "email", "profile", DRIVE_SCOPE, ...HEALTH_SCOPES];
     const gReady = /^[0-9]+-.+\.apps\.googleusercontent\.com$/.test(GID);
 
     function showError(text) {
@@ -200,10 +213,25 @@
         try { await loadGIS(); } catch (e) { showError(e.message); return; }
         const client = google.accounts.oauth2.initTokenClient({
             client_id: GID,
-            scope: "openid email profile",
+            scope: LOGIN_SCOPES.join(" "),
+            include_granted_scopes: false,
             callback: async (resp) => {
                 if (resp.error) { showError(`Google sign-in was cancelled or blocked (${resp.error}).`); return; }
                 try {
+                    const grantedScopes = new Set(String(resp.scope || LOGIN_SCOPES.join(" ")).split(/\s+/));
+                    if (!grantedScopes.has(DRIVE_SCOPE)) {
+                        sessionStorage.removeItem("lifetrack-drive-token");
+                        sessionStorage.removeItem("lifetrack-gtoken");
+                        showError("Allow Google Drive app-data access to enable secure syncing across your devices.");
+                        return;
+                    }
+                    const expiry = Date.now() + (Number(resp.expires_in || 3600) - 60) * 1000;
+                    sessionStorage.setItem("lifetrack-drive-token", JSON.stringify({ token: resp.access_token, exp: expiry }));
+                    if (HEALTH_SCOPES.length && HEALTH_SCOPES.every((scope) => grantedScopes.has(scope))) {
+                        sessionStorage.setItem("lifetrack-gtoken", JSON.stringify({ token: resp.access_token, exp: expiry, scopes: HEALTH_SCOPES.join(" ") }));
+                    } else {
+                        sessionStorage.removeItem("lifetrack-gtoken");
+                    }
                     const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${resp.access_token}` } });
                     if (!r.ok) throw new Error(`HTTP ${r.status}`);
                     const u = await r.json();

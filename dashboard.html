@@ -246,6 +246,7 @@
                 <span class="eyebrow">LONG-TERM PROGRESS</span>
                 <h2>Goals</h2>
                 <p>Pick a habit (or all of them) and a monthly target. Progress is counted from your real check-ins.</p>
+                <div id="readingGoalCard"></div>
                 <form id="goalForm" class="goal-form" novalidate>
                     <input id="goalName" type="text" maxlength="40" placeholder="Goal name, e.g. Run more" autocomplete="off">
                     <select id="goalHabit" aria-label="Habit for this goal"></select>
@@ -283,18 +284,20 @@
                     <div id="anKpis" class="kpi-grid"></div>
                     <h3 class="sub-head">Daily trend</h3>
                     <div id="analyticsChart" class="line-chart-wrap"></div>
+                    <h3 class="sub-head">Fitness trends · daily</h3>
+                    <div id="fitTrend" class="fit-trend-grid"></div>
                     <div class="duo-grid inner">
                         <div><h3 class="sub-head">Calendar heatmap</h3><div id="heatMonth" class="box-soft"></div></div>
                         <div><h3 class="sub-head">Habit balance</h3><div id="anRadar" class="box-soft"></div></div>
                     </div>
-                    <h3 class="sub-head">Fitness, last 14 days</h3>
-                    <div id="fitTrend" class="trend-grid"></div>
                 </div>
 
                 <div id="anYear" hidden>
                     <div id="anYearKpis" class="kpi-grid"></div>
                     <h3 class="sub-head">Month by month</h3>
                     <div id="yearlyChart"></div>
+                    <h3 class="sub-head">Fitness trends · daily average by month</h3>
+                    <div id="fitTrendYear" class="fit-trend-grid"></div>
                     <h3 class="sub-head">Every day of the year</h3>
                     <div id="heatYear" class="box-soft scroll-x"></div>
                     <div class="duo-grid inner">
@@ -312,13 +315,9 @@
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <input type="file" id="importFile" accept="application/json,.json" hidden>
 
-<footer class="level-up-footer">
-    <strong>Level Up Every Day 🚀</strong>
-</footer>
-
 <script src="config.js"></script>
 <script src="dashboard.js"></script>
 
-<footer class="lt-footer">©<strong>LT Series</strong></footer>
+<footer class="lt-footer"><span><a class="footer-privacy" href="privacy.html" aria-label="Privacy policy">© <strong>LT Series</strong></a> | <span class="footer-credit">Made by Suraj Shukla</span></span></footer>
 </body>
 </html>

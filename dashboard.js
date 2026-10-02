@@ -19,18 +19,31 @@
         localStorage.setItem("lifetrack-user", JSON.stringify(currentUser));
     }
     const NS = "lifetrack:" + currentUser.uid + ":";
+    let cloudTimer = null;
+    let cloudSyncing = false;
+    let cloudApplying = false;
+    let cloudFileId = null;
     const store = {
         get: (k) => localStorage.getItem(NS + k),
-        set: (k, v) => localStorage.setItem(NS + k, v),
-        remove: (k) => localStorage.removeItem(NS + k)
+        set: (k, v) => {
+            localStorage.setItem(NS + k, v);
+            if (!cloudApplying) scheduleCloudSync();
+        },
+        remove: (k) => {
+            localStorage.removeItem(NS + k);
+            if (!cloudApplying) scheduleCloudSync();
+        }
     };
     // one time only: the first account to open the app after this update keeps the data saved by the old single-user version
     if (!localStorage.getItem("lifetrack-migrated")) {
-        ["habits", "checks", "habit-start", "body", "goals", "fitness"].forEach((k) => {
+        ["habits", "checks", "habit-start", "body", "goals", "fitness", "reading-plan"].forEach((k) => {
             const old = localStorage.getItem("lifetrack-" + k);
             if (old !== null && localStorage.getItem(NS + k) === null) localStorage.setItem(NS + k, old);
         });
         localStorage.setItem("lifetrack-migrated", "1");
+    }
+    if (!localStorage.getItem(NS + "cloud-updated-at") && ["habits", "checks", "habit-start", "body", "goals", "fitness", "reading-plan"].some((key) => localStorage.getItem(NS + key) !== null)) {
+        localStorage.setItem(NS + "cloud-updated-at", String(Date.now()));
     }
 
     const monthSelect = document.getElementById("monthSelect");
@@ -63,6 +76,10 @@
     let checks = JSON.parse(store.get("checks")) || {};
     let habitStarts = JSON.parse(store.get("habit-start") || "{}");
     let bodyProfile = JSON.parse(store.get("body") || "null");
+    let readingPlan = JSON.parse(store.get("reading-plan") || "null") || {
+        bookIndex: 0, bookId: "atomic-habits", pageCount: 320, currentPage: 0,
+        dailyTarget: 10, dailyStart: 1, dailyEnd: 10, dailyDate: "", completedBooks: []
+    };
     let editingBody = false;
     let lastLife = null;
     let renderedDay = null;
@@ -276,6 +293,17 @@
                 checkbox.addEventListener("change", () => {
                     if (locked) {
                         checkbox.checked = false;
+                        return;
+                    }
+                    if (habit.toLowerCase() === "read" && checkbox.checked && cellUTC === t0) {
+                        if (readingPlan.currentPage < readingPlan.dailyEnd) {
+                            checkbox.checked = false;
+                            toast(`Read pages ${readingPlan.dailyStart}-${readingPlan.dailyEnd} before completing this habit.`);
+                            return;
+                        }
+                        completeReadingGoal();
+                        renderStats();
+                        renderCalendar();
                         return;
                     }
                     checks[storageKey(day, habit)] = checkbox.checked;
@@ -591,12 +619,61 @@
         "Eat one meal today slowly and without screens."
     ];
 
-    const READING_SUGGESTIONS = [
-        { title: "Atomic Habits", author: "James Clear", focus: "Build consistency with small daily systems." },
-        { title: "Deep Work", author: "Cal Newport", focus: "Practice focus and protect your attention." },
-        { title: "The Scout Mindset", author: "Julia Galef", focus: "Stay curious and examine ideas clearly." },
-        { title: "Thinking, Fast and Slow", author: "Daniel Kahneman", focus: "Explore judgment and decision-making." }
+    const READING_BOOKS = [
+        { id: "atomic-habits", title: "Atomic Habits", author: "James Clear", focus: "Build consistency with small daily systems.", pages: 320 },
+        { id: "deep-work", title: "Deep Work", author: "Cal Newport", focus: "Practice focus and protect your attention.", pages: 304 },
+        { id: "scout-mindset", title: "The Scout Mindset", author: "Julia Galef", focus: "Stay curious and examine ideas clearly.", pages: 288 },
+        { id: "thinking-fast-slow", title: "Thinking, Fast and Slow", author: "Daniel Kahneman", focus: "Explore judgment and decision-making.", pages: 512 },
+        { id: "mindset", title: "Mindset", author: "Carol S. Dweck", focus: "Learn how practice and feedback shape growth.", pages: 320 },
+        { id: "seven-habits", title: "The 7 Habits of Highly Effective People", author: "Stephen R. Covey", focus: "Build deliberate routines and personal responsibility.", pages: 384 },
+        { id: "make-it-stick", title: "Make It Stick", author: "Peter C. Brown, Henry L. Roediger III, and Mark A. McDaniel", focus: "Use evidence-based strategies for learning.", pages: 336 }
     ];
+
+    function saveReadingPlan() { store.set("reading-plan", JSON.stringify(readingPlan)); }
+
+    function prepareReadingDay() {
+        const before = JSON.stringify(readingPlan);
+        if (!Array.isArray(readingPlan.completedBooks)) readingPlan.completedBooks = [];
+        readingPlan.bookIndex = clamp(Math.floor(Number(readingPlan.bookIndex) || 0), 0, READING_BOOKS.length - 1);
+        const book = READING_BOOKS[readingPlan.bookIndex];
+        if (readingPlan.bookId !== book.id) {
+            readingPlan.bookId = book.id;
+            readingPlan.pageCount = book.pages;
+            readingPlan.currentPage = 0;
+            readingPlan.dailyStart = 1;
+            readingPlan.dailyEnd = Math.min(book.pages, readingPlan.dailyTarget || 10);
+            readingPlan.dailyDate = isoFromUTC(todayUTC());
+        }
+        readingPlan.pageCount = clamp(Math.floor(Number(readingPlan.pageCount) || book.pages), 1, 5000);
+        readingPlan.currentPage = clamp(Math.floor(Number(readingPlan.currentPage) || 0), 0, readingPlan.pageCount);
+        readingPlan.dailyTarget = clamp(Math.floor(Number(readingPlan.dailyTarget) || 10), 1, 100);
+        readingPlan.dailyStart = clamp(Math.floor(Number(readingPlan.dailyStart) || readingPlan.currentPage + 1), 1, readingPlan.pageCount);
+        readingPlan.dailyEnd = clamp(Math.floor(Number(readingPlan.dailyEnd) || Math.min(readingPlan.pageCount, readingPlan.dailyStart + readingPlan.dailyTarget - 1)), readingPlan.dailyStart, readingPlan.pageCount);
+        if (!readingPlan.dailyDate) readingPlan.dailyDate = isoFromUTC(todayUTC());
+        if (before !== JSON.stringify(readingPlan)) saveReadingPlan();
+        return book;
+    }
+
+    function completeReadingGoal() {
+        const book = prepareReadingDay();
+        if (readingPlan.currentPage < readingPlan.dailyEnd) return null;
+        const finishedBook = readingPlan.currentPage >= readingPlan.pageCount;
+        if (finishedBook) {
+            readingPlan.completedBooks.push({ id: book.id, title: book.title, author: book.author, pages: readingPlan.pageCount, completedAt: isoFromUTC(todayUTC()) });
+            readingPlan.bookIndex = (readingPlan.bookIndex + 1) % READING_BOOKS.length;
+            readingPlan.bookId = "";
+            prepareReadingDay();
+        } else {
+            readingPlan.dailyStart = readingPlan.currentPage + 1;
+            readingPlan.dailyEnd = Math.min(readingPlan.pageCount, readingPlan.currentPage + readingPlan.dailyTarget);
+            readingPlan.dailyDate = isoFromUTC(todayUTC());
+        }
+        const readHabit = habits.find((habit) => habit.toLowerCase() === "read");
+        if (readHabit) checks[keyFor(todayUTC(), readHabit)] = true;
+        saveReadingPlan();
+        if (readHabit) saveState();
+        return finishedBook;
+    }
 
     function bodyInfo() {
         const hm = bodyProfile.height / 100;
@@ -614,6 +691,45 @@
         const target = Math.max(bmr, maintenance + delta);
         const round50 = (value) => Math.round(value / 50) * 50;
         return { maintenance: round50(maintenance), low: round50(Math.max(bmr, target - 100)), high: round50(target + 100), goal: bodyProfile.goal || "maintain" };
+    }
+
+    function currentReadingBook() {
+        return READING_BOOKS[readingPlan.bookIndex] || null;
+    }
+
+    function saveReadingPlan() {
+        store.set("reading-plan", JSON.stringify(readingPlan));
+    }
+
+    function prepareReadingDay() {
+        const book = currentReadingBook();
+        if (!book) return null;
+        if (readingPlan.bookId !== book.id) {
+            readingPlan.bookId = book.id;
+            readingPlan.pageCount = book.pages;
+            readingPlan.currentPage = 0;
+            readingPlan.dailyStart = 1;
+            readingPlan.dailyEnd = Math.min(book.pages, readingPlan.dailyTarget || 10);
+            readingPlan.dailyDate = "";
+        }
+        const pageCount = Math.max(1, Math.floor(Number(readingPlan.pageCount) || book.pages));
+        readingPlan.pageCount = pageCount;
+        readingPlan.currentPage = clamp(Math.floor(Number(readingPlan.currentPage) || 0), 0, pageCount);
+        readingPlan.dailyTarget = clamp(Math.floor(Number(readingPlan.dailyTarget) || 10), 1, 100);
+        if (!Number.isFinite(readingPlan.dailyStart) || !Number.isFinite(readingPlan.dailyEnd)) {
+            readingPlan.dailyStart = readingPlan.currentPage + 1;
+            readingPlan.dailyEnd = Math.min(pageCount, readingPlan.currentPage + readingPlan.dailyTarget);
+        }
+        const today = isoFromUTC(todayUTC());
+        if (readingPlan.dailyDate !== today) {
+            if (readingPlan.currentPage >= readingPlan.dailyEnd && readingPlan.currentPage < pageCount) {
+                readingPlan.dailyStart = readingPlan.currentPage + 1;
+                readingPlan.dailyEnd = Math.min(pageCount, readingPlan.currentPage + readingPlan.dailyTarget);
+            }
+            readingPlan.dailyDate = today;
+            saveReadingPlan();
+        }
+        return book;
     }
 
     function bodyFormHTML() {
@@ -665,7 +781,7 @@
             bodyProfile = { height, weight, size, age, sex, activity, goal };
             store.set("body", JSON.stringify(bodyProfile));
             editingBody = false;
-            renderDailyReminder(lastLife || computeLifetime());
+            renderStats();
         });
         const cancel = document.getElementById("bfCancel");
         if (cancel) {
@@ -686,9 +802,14 @@
         const dateText = now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" });
         const dayNumber = Math.floor(todayUTC() / DAY_MS);
         const tip = DAILY_TIPS[dayNumber % DAILY_TIPS.length];
-        const reading = READING_SUGGESTIONS[Math.floor(dayNumber / 7) % READING_SUGGESTIONS.length];
+        const reading = prepareReadingDay();
+        const readingUrl = `https://books.google.com/books?q=${encodeURIComponent(`${reading.title} ${reading.author}`)}`;
         const readHabit = habits.find((habit) => habit.toLowerCase() === "read");
         const workoutHabit = habits.find((habit) => habit.toLowerCase() === "workout");
+        const readingPagesToday = readingPlan.dailyEnd - readingPlan.dailyStart + 1;
+        const readingPagesDone = clamp(readingPlan.currentPage - readingPlan.dailyStart + 1, 0, readingPagesToday);
+        const readingGoalReady = readingPlan.currentPage >= readingPlan.dailyEnd;
+        const readHabitDone = readHabit && Boolean(checks[keyFor(todayUTC(), readHabit)]);
         const planButton = (habit, label) => {
             if (!habit) return `<span class="reminder-note">Add a ${label} habit to track this task.</span>`;
             const done = Boolean(checks[keyFor(todayUTC(), habit)]);
@@ -746,10 +867,13 @@
                     <div class="plan-task-action">${planButton(workoutHabit, "Workout")}</div>
                 </div>`;
             html += `<div class="reminder-reading">
-                    <div><small class="eyebrow">MIND &amp; DISCIPLINE</small><h3>Read 10 pages</h3><strong>${reading.title}</strong><span>by ${reading.author}</span><p>${reading.focus}</p></div>
-                    ${planButton(readHabit, "Read")}
+                    <div class="reading-book-copy"><small class="eyebrow">MIND &amp; DISCIPLINE</small><h3>Read pages ${readingPlan.dailyStart}–${readingPlan.dailyEnd}</h3><strong>${esc(reading.title)}</strong><span>by ${esc(reading.author)} · ${readingPlan.pageCount} pages</span><p>${esc(reading.focus)}</p>
+                        <div class="reading-page-controls"><button type="button" data-reading-page="-1" aria-label="Decrease current page"${readingPlan.currentPage <= readingPlan.dailyStart - 1 ? " disabled" : ""}>−</button><span>Page ${readingPlan.currentPage} / ${readingPlan.pageCount}</span><button type="button" data-reading-page="1" aria-label="Increase current page"${readingPlan.currentPage >= readingPlan.pageCount ? " disabled" : ""}>+</button></div>
+                        <div class="reading-progress"><b style="width:${Math.round((readingPagesDone / readingPagesToday) * 100)}%"></b></div><small class="reading-progress-label">${readingPagesDone}/${readingPagesToday} pages this goal${readHabitDone ? " · Read habit done today" : ""}</small>
+                    </div>
+                    <div class="reading-actions"><a class="secondary-button reading-online" href="${readingUrl}" target="_blank" rel="noopener noreferrer" aria-label="Find online reading options for ${esc(reading.title)}">Read online</a><button type="button" class="plan-done${readingGoalReady ? " done" : ""}" data-reading-complete aria-pressed="${readingGoalReady}"${readingGoalReady ? "" : " disabled"}>${readingGoalReady ? (readingPlan.currentPage >= readingPlan.pageCount ? "Finish book" : "Complete pages") : "Read pages to continue"}</button></div>
                 </div>
-                <p class="reminder-note">Calorie range is a rough adult estimate, not medical advice. Reading can build knowledge and focus, but cannot guarantee an IQ increase.</p>`;
+                <p class="reminder-note">Page counts are edition estimates; adjust the total in Goals to match your copy.</p>`;
             if (note) html += `<p class="reminder-note">${note.trim()}</p>`;
         }
 
@@ -801,23 +925,24 @@
     // Google Health API rejects tokens that also carry old Fit scopes, so only ONE family is ever requested.
     const HEALTH_SCOPES = (FIT_ON ? [
         "https://www.googleapis.com/auth/fitness.activity.read",
-        "https://www.googleapis.com/auth/fitness.sleep.read",
-        "https://www.googleapis.com/auth/fitness.heart_rate.read",
-        "https://www.googleapis.com/auth/fitness.blood_pressure.read",
-        "https://www.googleapis.com/auth/fitness.blood_glucose.read",
-        "https://www.googleapis.com/auth/fitness.oxygen_saturation.read",
-        "https://www.googleapis.com/auth/fitness.body_temperature.read"
+        "https://www.googleapis.com/auth/fitness.sleep.read"
     ] : [
         "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
-        "https://www.googleapis.com/auth/googlehealth.sleep.readonly",
-        "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
-        "https://www.googleapis.com/auth/googlehealth.nutrition.readonly"
+        "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
     ]).join(" ");
 
     let goals = JSON.parse(store.get("goals") || "null") || [
         { id: "g-all", name: "Monthly consistency", habit: "*", target: 80 }
     ];
     let fitness = JSON.parse(store.get("fitness") || "{}");
+    let correctedSleepHistory = false;
+    Object.values(fitness).forEach((entry) => {
+        if (entry && Number.isFinite(Number(entry.sleep)) && Number(entry.sleep) > 24) {
+            entry.sleep = 24;
+            correctedSleepHistory = true;
+        }
+    });
+    if (correctedSleepHistory) store.set("fitness", JSON.stringify(fitness));
     let analyticsView = "month";
     let ctx = null;
     let fitStatus = { text: "", kind: "" };
@@ -1134,6 +1259,32 @@
         <div class="chart-legend"><span><i class="lg-line"></i>Habits done per day</span><span><i class="lg-dash"></i>7-day average</span></div>`;
     }
 
+    function metricTrendSVG(values, target, visible, unit, color, labels, label) {
+        const W = 960, H = 190, L = 64, R = 14, T = 14, B = 28;
+        const plotW = W - L - R, plotH = H - T - B;
+        const maxValue = Math.max(target || 0, 1, ...values.slice(0, visible));
+        const y = (value) => T + plotH - (clamp(value, 0, maxValue) / maxValue) * plotH;
+        const x = (index) => L + (values.length > 1 ? (index * plotW) / (values.length - 1) : plotW / 2);
+        const format = (value) => Number.isInteger(value) ? fmtNum(value) : value.toFixed(1);
+        let grid = "";
+        for (let tick = 0; tick <= 4; tick += 1) {
+            const value = (maxValue * tick) / 4;
+            grid += `<line class="cg-line" x1="${L}" y1="${y(value).toFixed(1)}" x2="${W - R}" y2="${y(value).toFixed(1)}"></line><text class="cg-tick" x="${L - 7}" y="${(y(value) + 3).toFixed(1)}" text-anchor="end">${format(value)}</text>`;
+        }
+        let xLabels = "";
+        labels.forEach((labelText, index) => {
+            if (labels.length <= 12 || index === 0 || (index + 1) % 5 === 0 || index === labels.length - 1) {
+                xLabels += `<text class="cg-day" x="${x(index).toFixed(1)}" y="${H - 7}" text-anchor="middle">${labelText}</text>`;
+            }
+        });
+        if (!visible) return `<svg class="line-chart-svg metric-trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${label}">${grid}${xLabels}<text class="cg-empty" x="${W / 2}" y="${T + plotH / 2}" text-anchor="middle">No data for this range</text></svg>`;
+        const points = values.slice(0, visible).map((value, index) => [x(index), y(value)]);
+        const path = points.map((point, index) => `${index ? "L" : "M"} ${point[0].toFixed(1)} ${point[1].toFixed(1)}`).join(" ");
+        const dots = points.map((point, index) => `<circle class="line-dot" cx="${point[0].toFixed(1)}" cy="${point[1].toFixed(1)}" r="3.2"><title>${labels[index]}: ${format(values[index])}${unit}</title></circle>`).join("");
+        const targetLine = target > 0 ? `<line class="cg-target" x1="${L}" y1="${y(target).toFixed(1)}" x2="${W - R}" y2="${y(target).toFixed(1)}"><title>Daily target: ${format(target)}${unit}</title></line>` : "";
+        return `<svg class="line-chart-svg metric-trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${label}">${grid}${xLabels}${targetLine}<path class="line-stroke" style="stroke:${color}" d="${path}"></path>${dots}</svg><div class="chart-legend"><span><i class="lg-line" style="border-color:${color}"></i>${label}</span>${target > 0 ? `<span><i class="tgt-line"></i>Daily target ${format(target)}${unit}</span>` : ""}</div>`;
+    }
+
     function miniBarsSVG(values, target, color, unit) {
         const W = 240;
         const H = 84;
@@ -1346,6 +1497,13 @@
         const days = [];
         for (let i = 0; i < 7; i += 1) days.push(t0 - i * DAY_MS);
         const habitAvg = n ? (days.reduce((s, ms) => s + dayCount(ms), 0) / (7 * n)) * 100 : 0;
+        const averageSteps = days.reduce((sum, ms) => sum + (Number((fitness[isoFromUTC(ms)] || {}).steps) || 0), 0) / 7;
+        const stepProgress = tg.steps ? clamp((averageSteps / tg.steps) * 100, 0, 100) : 0;
+        const strideMeters = bodyProfile && bodyProfile.height > 0 ? (bodyProfile.height / 100) * 0.415 : 0.72;
+        const caloriesTarget = bodyProfile && bodyProfile.weight > 0 ? tg.steps * bodyProfile.weight * 0.0005 : 0;
+        const averageCalories = bodyProfile && bodyProfile.weight > 0 ? averageSteps * bodyProfile.weight * 0.0005 : 0;
+        const distanceTargetKm = (tg.steps * strideMeters) / 1000;
+        const averageDistanceKm = (averageSteps * strideMeters) / 1000;
         const avgOf = (field, target) => {
             const logged = days.map((ms) => (fitness[isoFromUTC(ms)] || {})[field]).filter((v) => typeof v === "number" && v > 0);
             return logged.length ? clamp((logged.reduce((s, x) => s + x, 0) / logged.length / target) * 100, 0, 100) : 0;
@@ -1357,6 +1515,8 @@
             ["Water", avgOf("water", tg.water)],
             ["Sleep", avgOf("sleep", tg.sleep)],
             ["Focus", avgOf("active", tg.active)],
+            ["Calories", caloriesTarget ? clamp((averageCalories / caloriesTarget) * 100, 0, 100) : 0],
+            ["Distance", distanceTargetKm ? clamp((averageDistanceKm / distanceTargetKm) * 100, 0, 100) : 0],
             ["Mood", moods.length ? (moods.reduce((s, x) => s + x, 0) / moods.length / 5) * 100 : 0]
         ];
         document.getElementById("lifeRadar").innerHTML = radarSVG(axes.map((a) => a[0]), [{ vals: axes.map((a) => a[1]), color: "var(--accent)" }], "Life balance, last 7 days");
@@ -1473,6 +1633,17 @@
     function renderGoalsPage() {
         const { y, m } = selYM();
         fillGoalHabitSelect();
+        const readingCard = document.getElementById("readingGoalCard");
+        const readingBook = prepareReadingDay();
+        const readingProgress = Math.round((readingPlan.currentPage / readingPlan.pageCount) * 100);
+        const lastCompleted = readingPlan.completedBooks[readingPlan.completedBooks.length - 1];
+        readingCard.innerHTML = `<article class="goal-card reading-goal-card">
+            <header><span class="hc-name">Read · ${esc(readingBook.title)}</span><span class="chip ${readingProgress >= 100 ? "good" : ""}">${readingProgress >= 100 ? "Complete" : `${readingProgress}% complete`}</span></header>
+            <div class="hc-main">${ringSVG(readingProgress, { size: 76, stroke: 7, color: "var(--accent)" })}<div class="goal-meta"><span class="chip">by ${esc(readingBook.author)}</span><p>Page ${readingPlan.currentPage} of ${readingPlan.pageCount}</p><small>Today: pages ${readingPlan.dailyStart}–${readingPlan.dailyEnd}</small></div></div>
+            <label class="reading-edition">Total pages in your edition<input type="number" min="1" max="5000" step="1" value="${readingPlan.pageCount}" data-reading-page-count aria-label="Total pages in this book"></label>
+            ${lastCompleted ? `<p class="reading-completed">Last completed: <strong>${esc(lastCompleted.title)}</strong> · ${lastCompleted.pages} pages</p>` : ""}
+        </article>`;
+        animateRings(readingCard);
         const grid = document.getElementById("goalPageList");
         if (!goals.length) {
             grid.innerHTML = `<p class="empty-note">No goals yet. Name one above, choose a habit and a target.</p>`;
@@ -1545,19 +1716,23 @@
         document.getElementById("heatMonth").innerHTML = heatMonthHTML(y, m);
         document.getElementById("anRadar").innerHTML = radarSVG(habits.slice(), [{ vals: habits.map((h) => habitPct(h, y, m)), color: "var(--primary)" }], "Habit balance this month");
 
-        // fitness last 14 days
-        const t0 = todayUTC();
         const tg = dailyTargets(ctx.life);
-        const series = (field, div) => { const a = []; for (let i = 13; i >= 0; i -= 1) a.push(Math.round((((fitness[isoFromUTC(t0 - i * DAY_MS)] || {})[field]) || 0) / div * 10) / 10); return a; };
-        const card = (title, values, target, color, unit, fmt) => {
-            const logged = values.filter((v) => v > 0);
-            const avg = logged.length ? logged.reduce((a, b) => a + b, 0) / logged.length : 0;
-            return `<div class="box-soft trend-card"><div class="trend-top"><strong>${title}</strong><span>${logged.length ? `avg ${fmt(avg)}${unit}` : "no data yet"}</span></div>${miniBarsSVG(values, target, color, unit)}</div>`;
+        const monthDays = daysIn(y, m);
+        const monthlyFitSeries = (field, divisor) => Array.from({ length: monthDays }, (_, index) => {
+            const ms = Date.UTC(y, m, index + 1);
+            return Math.round(((Number((fitness[isoFromUTC(ms)] || {})[field]) || 0) / divisor) * 10) / 10;
+        });
+        const metricCard = (title, values, target, color, unit, labels, visible, period) => {
+            const logged = values.slice(0, visible).filter((value) => value > 0);
+            const average = visible ? values.slice(0, visible).reduce((sum, value) => sum + value, 0) / visible : 0;
+            const summary = logged.length ? `avg ${average.toFixed(1)}${unit}/day` : "No readings yet";
+            return `<article class="fit-trend-card"><div class="fit-trend-head"><strong>${title}</strong><span>${summary}</span></div>${metricTrendSVG(values, target, visible, unit, color, labels, `${title}, ${period}`)}</article>`;
         };
+        const dayLabels = Array.from({ length: monthDays }, (_, index) => String(index + 1));
         document.getElementById("fitTrend").innerHTML =
-            card("Steps", series("steps", 1), tg.steps, "var(--primary)", "", fmtNum) +
-            card("Water (L)", series("water", 1000), tg.water / 1000, "var(--accent)", " L", (v) => v.toFixed(1)) +
-            card("Sleep (h)", series("sleep", 1), tg.sleep, "#a78bfa", " h", (v) => v.toFixed(1));
+            metricCard("Steps", monthlyFitSeries("steps", 1), tg.steps, "var(--primary)", "", dayLabels, elapsed, `${monthNames[m]} ${y}`) +
+            metricCard("Water", monthlyFitSeries("water", 1000), tg.water / 1000, "var(--accent)", " L", dayLabels, elapsed, `${monthNames[m]} ${y}`) +
+            metricCard("Sleep", monthlyFitSeries("sleep", 1), tg.sleep, "#a78bfa", " h", dayLabels, elapsed, `${monthNames[m]} ${y}`);
 
         renderYearly(s);
     }
@@ -1602,6 +1777,28 @@
         requestAnimationFrame(() => requestAnimationFrame(() => {
             document.querySelectorAll("#yearlyChart .year-bar[data-h]").forEach((bar) => { bar.style.height = `${bar.dataset.h}%`; });
         }));
+
+        const tg = dailyTargets(ctx.life);
+        const yearMetric = (field, divisor) => monthNames.map((_, month) => {
+            const days = elapsedDays(y, month);
+            if (!days) return 0;
+            let total = 0;
+            for (let day = 1; day <= days; day += 1) {
+                total += (Number((fitness[isoFromUTC(Date.UTC(y, month, day))] || {})[field]) || 0) / divisor;
+            }
+            return Math.round((total / days) * 10) / 10;
+        });
+        const visibleMonths = y < new Date().getFullYear() ? 12 : y === new Date().getFullYear() ? new Date().getMonth() + 1 : 0;
+        const monthLabels = monthNames.map((name) => name.slice(0, 3));
+        const yearMetricCard = (title, values, target, color, unit) => {
+            const logged = values.slice(0, visibleMonths).filter((value) => value > 0);
+            const average = visibleMonths ? values.slice(0, visibleMonths).reduce((sum, value) => sum + value, 0) / visibleMonths : 0;
+            return `<article class="fit-trend-card"><div class="fit-trend-head"><strong>${title}</strong><span>${logged.length ? `avg ${average.toFixed(1)}${unit}/day` : "No readings yet"}</span></div>${metricTrendSVG(values, target, visibleMonths, unit, color, monthLabels, `${title}, ${y}`)}</article>`;
+        };
+        document.getElementById("fitTrendYear").innerHTML =
+            yearMetricCard("Steps · avg/day", yearMetric("steps", 1), tg.steps, "var(--primary)", "") +
+            yearMetricCard("Water · avg/day", yearMetric("water", 1000), tg.water / 1000, "var(--accent)", " L") +
+            yearMetricCard("Sleep · avg/day", yearMetric("sleep", 1), tg.sleep, "#a78bfa", " h");
 
         // year kpis
         let perfect = 0;
@@ -1657,6 +1854,170 @@
         return null;
     }
 
+    function driveToken() {
+        try {
+            const token = JSON.parse(sessionStorage.getItem("lifetrack-drive-token") || "null");
+            return token && token.token && token.exp > Date.now() ? token.token : null;
+        } catch (e) { return null; }
+    }
+
+    function scheduleCloudSync() {
+        if (cloudApplying) return;
+        localStorage.setItem(NS + "cloud-updated-at", String(Date.now()));
+        if (!driveToken()) {
+            const status = document.getElementById("fitStatus");
+            if (status && currentUser.provider === "google") {
+                status.textContent = "Google sign-in expired. Sign in again from the login page to sync new changes.";
+                status.className = "fit-status warn";
+            }
+            return;
+        }
+        clearTimeout(cloudTimer);
+        cloudTimer = setTimeout(() => syncCloud(), 700);
+    }
+
+    function cloudSnapshot() {
+        return {
+            app: "LifeTrack",
+            version: 1,
+            updatedAt: Number(localStorage.getItem(NS + "cloud-updated-at")) || Date.now(),
+            habits,
+            checks,
+            habitStarts,
+            body: bodyProfile,
+            goals,
+            fitness,
+            readingPlan
+        };
+    }
+
+    async function driveRequest(url, options) {
+        const token = driveToken();
+        if (!token) throw new Error("Google sign-in expired. Sign in with Google again to sync your data.");
+        const response = await fetch(url, Object.assign({}, options, {
+            headers: Object.assign({ Authorization: `Bearer ${token}` }, options && options.headers || {})
+        }));
+        if (response.status === 401) {
+            sessionStorage.removeItem("lifetrack-drive-token");
+            throw new Error("Google sign-in expired. Sign in with Google again to sync your data.");
+        }
+        if (!response.ok) throw new Error(`Google Drive sync failed (HTTP ${response.status}).`);
+        return response;
+    }
+
+    async function syncCloud() {
+        if (cloudSyncing || !driveToken()) return;
+        cloudSyncing = true;
+        try {
+            const listResponse = await driveRequest("https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&pageSize=10&fields=files(id,name)");
+            const listed = await listResponse.json();
+            const file = (listed.files || []).find((entry) => entry.name === "lifetrack-data.json");
+            const localUpdatedAt = Number(localStorage.getItem(NS + "cloud-updated-at")) || 0;
+            const lastCloudSyncAt = Number(localStorage.getItem(NS + "cloud-synced-at")) || 0;
+            const hasLocalChanges = localUpdatedAt > lastCloudSyncAt;
+            let remote = null;
+
+            if (file) {
+                cloudFileId = file.id;
+                const response = await driveRequest(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
+                remote = await response.json();
+            }
+
+            if (remote && remote.app === "LifeTrack" && Number(remote.updatedAt) > localUpdatedAt && !hasLocalChanges) {
+                cloudApplying = true;
+                habits = Array.isArray(remote.habits) ? remote.habits.map(String) : habits;
+                checks = remote.checks && typeof remote.checks === "object" ? remote.checks : checks;
+                habitStarts = remote.habitStarts && typeof remote.habitStarts === "object" ? remote.habitStarts : habitStarts;
+                bodyProfile = remote.body || null;
+                goals = Array.isArray(remote.goals) ? remote.goals : goals;
+                fitness = remote.fitness && typeof remote.fitness === "object" ? remote.fitness : fitness;
+                readingPlan = remote.readingPlan && typeof remote.readingPlan === "object" ? remote.readingPlan : readingPlan;
+                store.set("habits", JSON.stringify(habits));
+                store.set("checks", JSON.stringify(checks));
+                store.set("habit-start", JSON.stringify(habitStarts));
+                if (bodyProfile) store.set("body", JSON.stringify(bodyProfile)); else store.remove("body");
+                store.set("goals", JSON.stringify(goals));
+                store.set("fitness", JSON.stringify(fitness));
+                store.set("reading-plan", JSON.stringify(readingPlan));
+                localStorage.setItem(NS + "cloud-updated-at", String(Number(remote.updatedAt)));
+                localStorage.setItem(NS + "cloud-synced-at", String(Number(remote.updatedAt)));
+                cloudApplying = false;
+                ensureYearOptions();
+                renderCalendar();
+                renderStats();
+            } else {
+                let snapshot = cloudSnapshot();
+                if (remote && remote.app === "LifeTrack" && hasLocalChanges) {
+                    const mergedFitness = Object.assign({}, remote.fitness || {});
+                    Object.keys(fitness).forEach((day) => {
+                        mergedFitness[day] = Object.assign({}, mergedFitness[day] || {}, fitness[day] || {});
+                    });
+                    const mergedGoals = new Map((remote.goals || []).map((goal) => [goal.id, goal]));
+                    (goals || []).forEach((goal) => mergedGoals.set(goal.id, goal));
+                    snapshot = Object.assign({}, snapshot, {
+                        updatedAt: Math.max(Date.now(), Number(remote.updatedAt) || 0),
+                        habits: Array.from(new Set([...(remote.habits || []), ...habits])),
+                        checks: Object.assign({}, remote.checks || {}, checks),
+                        habitStarts: Object.assign({}, remote.habitStarts || {}, habitStarts),
+                        body: bodyProfile || remote.body || null,
+                        goals: Array.from(mergedGoals.values()),
+                        fitness: mergedFitness,
+                        readingPlan: (Number(readingPlan.currentPage) || 0) > (Number((remote.readingPlan || {}).currentPage) || 0) ? readingPlan : (remote.readingPlan || readingPlan)
+                    });
+                    habits = snapshot.habits;
+                    checks = snapshot.checks;
+                    habitStarts = snapshot.habitStarts;
+                    bodyProfile = snapshot.body;
+                    goals = snapshot.goals;
+                    fitness = snapshot.fitness;
+                    readingPlan = snapshot.readingPlan;
+                    cloudApplying = true;
+                    store.set("habits", JSON.stringify(habits));
+                    store.set("checks", JSON.stringify(checks));
+                    store.set("habit-start", JSON.stringify(habitStarts));
+                    if (bodyProfile) store.set("body", JSON.stringify(bodyProfile)); else store.remove("body");
+                    store.set("goals", JSON.stringify(goals));
+                    store.set("fitness", JSON.stringify(fitness));
+                    store.set("reading-plan", JSON.stringify(readingPlan));
+                    cloudApplying = false;
+                    ensureYearOptions();
+                    renderCalendar();
+                    renderStats();
+                }
+                const body = JSON.stringify(snapshot);
+                if (file) {
+                    await driveRequest(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(file.id)}?uploadType=media`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body
+                    });
+                } else {
+                    const createResponse = await driveRequest("https://www.googleapis.com/drive/v3/files?fields=id", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ name: "lifetrack-data.json", mimeType: "application/json", parents: ["appDataFolder"] })
+                    });
+                    const created = await createResponse.json();
+                    cloudFileId = created.id;
+                    await driveRequest(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(created.id)}?uploadType=media`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body
+                    });
+                }
+                localStorage.setItem(NS + "cloud-updated-at", String(snapshot.updatedAt));
+                localStorage.setItem(NS + "cloud-synced-at", String(snapshot.updatedAt));
+            }
+            setFitStatus("LifeTrack data synced to your Google account.", "good");
+        } catch (error) {
+            cloudApplying = false;
+            console.error("LifeTrack cloud sync failed", error);
+            setFitStatus(error.message, "warn");
+        } finally {
+            cloudSyncing = false;
+        }
+    }
+
     function setFitStatus(text, kind) {
         fitStatus = { text, kind: kind || "" };
         const el = document.getElementById("fitStatus");
@@ -1674,7 +2035,7 @@
         acts.innerHTML = !HEALTH_ON ? ""
             : linked
             ? `<span class="chip good">● Live from Google</span><button type="button" class="secondary-button" id="gSync">Sync now</button>`
-            : `<button type="button" class="secondary-button" id="gConnect">Connect ${FIT_ON ? "Google Fit" : "Google Health"}</button>`;
+            : `<span class="chip">Sign in with Google for health data</span>`;
 
         const src = (k) => (f[`src_${k}`] === "google" ? `<small class="src">from Google</small>` : "");
         const tile = (key, label, value, goal, color, text, control) => {
@@ -1682,32 +2043,30 @@
             return `<div class="fit-tile">${ringSVG(p, { size: 84, stroke: 8, color })}<strong>${label}</strong><span class="fit-val">${text}</span>${control}${src(key)}</div>`;
         };
         const moods = ["😞", "🙁", "😐", "🙂", "😄"];
-        const bp = f.bloodPressure || {};
-        const vital = (key, label, value, unit, placeholder, step, color) => {
-            const logged = Number.isFinite(f[key]) && f[key] > 0;
-            const display = logged ? value : "—";
-            const ariaLabel = logged ? `${label}: ${value} ${unit}` : `${label}: not logged`;
-            return `<label class="vital-tile">${ringSVG(logged ? 100 : 0, { size: 76, stroke: 7, color, text: display, ariaLabel })}<strong>${label}</strong><span class="fit-val">${unit}</span><input class="fit-input" type="number" min="0" step="${step}" inputmode="decimal" data-field="${key}" value="${Number.isFinite(f[key]) ? f[key] : ""}" placeholder="${placeholder}" aria-label="${label}">${src(key)}</label>`;
-        };
+        const steps = Number(f.steps) || 0;
+        const hasProfile = Boolean(bodyProfile && bodyProfile.weight > 0 && bodyProfile.height > 0);
+        const strideMeters = hasProfile ? (bodyProfile.height / 100) * 0.415 : 0.72;
+        const distanceKm = Math.round((steps * strideMeters) / 10) / 100;
+        const caloriesBurned = hasProfile ? Math.round(steps * bodyProfile.weight * 0.0005) : null;
+        const calorieGoal = hasProfile ? Math.round(tg.steps * bodyProfile.weight * 0.0005) : 0;
+        const metricTile = (label, value, unit, progress, color, ariaLabel, note = "") =>
+            `<div class="vital-tile">${ringSVG(progress, { size: 76, stroke: 7, color, text: value == null ? "—" : String(value), ariaLabel })}<strong>${label}</strong><span class="fit-val">${unit}</span>${note ? `<small class="src">${note}</small>` : ""}</div>`;
         box.innerHTML = `<div class="fit-grid">
             ${tile("steps", "Steps", f.steps || 0, tg.steps, "var(--primary)", `${fmtNum(f.steps || 0)} / ${fmtNum(tg.steps)}`,
                 `<input class="fit-input" type="number" min="0" max="100000" step="100" inputmode="numeric" data-field="steps" value="${f.steps || ""}" placeholder="Set steps" aria-label="Steps today">`)}
             ${tile("water", "Water", f.water || 0, tg.water, "var(--accent)", `${((f.water || 0) / 1000).toFixed(2)} / ${(tg.water / 1000).toFixed(1)} L`,
                 `<div class="fit-btns"><button type="button" data-water="-250" aria-label="Remove 250 ml">−</button><button type="button" data-water="250" aria-label="Add 250 ml">+250 ml</button></div>`)}
             ${tile("sleep", "Sleep", f.sleep || 0, tg.sleep, "#a78bfa", `${(f.sleep || 0).toFixed(1)} / ${tg.sleep} h`,
-                `<input class="fit-input" type="number" min="0" max="16" step="0.5" inputmode="decimal" data-field="sleep" value="${f.sleep || ""}" placeholder="Hours slept" aria-label="Hours slept">`)}
+                `<input class="fit-input" type="number" min="0" max="24" step="0.5" inputmode="decimal" data-field="sleep" value="${f.sleep || ""}" placeholder="Hours slept" aria-label="Hours slept">`)}
             ${tile("active", "Focus", f.active || 0, tg.active, "var(--zone-orange)", `${f.active || 0} / ${tg.active} min`,
                 `<input class="fit-input" type="number" min="0" max="600" step="5" inputmode="numeric" data-field="active" value="${f.active || ""}" placeholder="Minutes" aria-label="Focus minutes">`)}
         </div>
         <div class="vitals-grid">
-            ${vital("heartRate", "Heart rate", fmtNum(f.heartRate || 0), "bpm", "bpm", "1", "var(--primary)")}
-            <label class="vital-tile">${ringSVG(Number.isFinite(bp.systolic) && Number.isFinite(bp.diastolic) ? 100 : 0, { size: 76, stroke: 7, color: "var(--zone-red)", text: Number.isFinite(bp.systolic) && Number.isFinite(bp.diastolic) ? `${fmtNum(bp.systolic)}/${fmtNum(bp.diastolic)}` : "—", ariaLabel: Number.isFinite(bp.systolic) && Number.isFinite(bp.diastolic) ? `Blood pressure: ${bp.systolic} over ${bp.diastolic} mmHg` : "Blood pressure: not logged" })}<strong>Blood pressure</strong><span class="fit-val">mmHg</span><input class="fit-input" type="text" inputmode="numeric" data-field="bloodPressure" value="${Number.isFinite(bp.systolic) && Number.isFinite(bp.diastolic) ? `${bp.systolic}/${bp.diastolic}` : ""}" placeholder="120/80" aria-label="Blood pressure, systolic over diastolic in millimeters of mercury">${src("bloodPressure")}</label>
-            ${vital("bloodGlucose", "Blood glucose", Number(f.bloodGlucose || 0).toFixed(1), "mg/dL", "mg/dL", "0.1", "var(--zone-yellow)")}
-            ${vital("oxygenSaturation", "Oxygen saturation", Number(f.oxygenSaturation || 0).toFixed(1), "%", "%", "0.1", "var(--accent)")}
-            ${vital("bodyTemperature", "Body temperature", Number(f.bodyTemperature || 0).toFixed(1), "°C", "°C", "0.1", "var(--zone-orange)")}
+            ${metricTile("Calories burned", caloriesBurned == null ? null : fmtNum(caloriesBurned), "estimated kcal", calorieGoal ? (caloriesBurned / calorieGoal) * 100 : 0, "var(--zone-orange)", caloriesBurned == null ? "Calories unavailable until body weight is added" : `Estimated ${caloriesBurned} kilocalories from ${steps} steps and ${bodyProfile.weight} kg`, hasProfile ? "steps + plan weight" : "add weight in Daily Plan")}
+            ${metricTile("Distance", distanceKm.toFixed(2), "km estimated", tg.steps ? (steps / tg.steps) * 100 : 0, "var(--primary)", `${distanceKm.toFixed(2)} kilometers estimated from ${steps} steps`, hasProfile ? "steps + plan height" : "steps · average stride")}
         </div>
         <div class="mood-row"><span>How do you feel today?</span><div>${moods.map((e, i) => `<button type="button" class="mood-btn${f.mood === i + 1 ? " on" : ""}" data-mood="${i + 1}" aria-label="Mood ${i + 1} of 5" aria-pressed="${f.mood === i + 1}">${e}</button>`).join("")}</div></div>
-        <p id="fitStatus" class="fit-status ${fitStatus.kind}">${esc(fitStatus.text || (linked ? "Connected. Google readings refresh every minute when available." : (HEALTH_ON ? `Log by hand, or connect ${FIT_ON ? "Google Fit" : "Google Health"} for available readings.` : "Log your steps, water, sleep, focus and health readings by hand.")))}</p>`;
+        <p id="fitStatus" class="fit-status ${fitStatus.kind}">${esc(fitStatus.text || (linked ? "Connected. Google readings refresh every minute when available." : (HEALTH_ON ? "Google Health access is requested when you sign in with Google." : "Log your steps, water, sleep, focus and health readings by hand.")))}</p>`;
         animateRings(box);
     }
 
@@ -1738,7 +2097,7 @@
     }
 
     /* Google Fit REST API: fallback that reads the phone's Google Fit data (works only while Google still runs the Fit API). */
-    async function syncFit(notes, wantSteps, wantSleep, wantVitals) {
+    async function syncFit(notes, wantSteps, wantSleep) {
         const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
         const startMs = midnight.getTime() - 13 * DAY_MS;
         const endMs = midnight.getTime() + DAY_MS;
@@ -1781,7 +2140,7 @@
                 });
                 Object.keys(nights).forEach((iso) => {
                     const f = fitness[iso] || (fitness[iso] = {});
-                    f.sleep = Math.round((nights[iso] / 60) * 10) / 10; f.src_sleep = "google";
+                    f.sleep = Math.min(24, Math.round((nights[iso] / 60) * 10) / 10); f.src_sleep = "google";
                 });
             } catch (e) {
                 if (e.message === "expired") throw e;
@@ -1790,55 +2149,6 @@
             }
         }
 
-        if (wantVitals) {
-            const metrics = [
-                { key: "heartRate", type: "com.google.heart_rate.bpm" },
-                { key: "bloodPressure", type: "com.google.blood_pressure", bloodPressure: true },
-                { key: "bloodGlucose", type: "com.google.blood_glucose", glucose: true },
-                { key: "oxygenSaturation", type: "com.google.oxygen_saturation", oxygen: true },
-                { key: "bodyTemperature", type: "com.google.body.temperature" }
-            ];
-            await Promise.all(metrics.map(async (metric) => {
-                try {
-                    const result = await gfetch("https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate", {
-                        method: "POST",
-                        body: JSON.stringify({
-                            aggregateBy: [{ dataTypeName: metric.type }],
-                            bucketByTime: { durationMillis: DAY_MS },
-                            startTimeMillis: String(startMs),
-                            endTimeMillis: String(endMs)
-                        })
-                    });
-                    (result.bucket || []).forEach((bucket) => {
-                        const sums = [], counts = [];
-                        (bucket.dataset || []).forEach((dataset) => (dataset.point || []).forEach((point) => {
-                            (point.value || []).forEach((item, index) => {
-                                const value = Number(item.fpVal ?? item.intVal);
-                                if (!Number.isFinite(value)) return;
-                                sums[index] = (sums[index] || 0) + value;
-                                counts[index] = (counts[index] || 0) + 1;
-                            });
-                        }));
-                        const averages = sums.map((sum, index) => counts[index] ? sum / counts[index] : null);
-                        const iso = isoLocal(Number(bucket.startTimeMillis));
-                        const reading = fitness[iso] || (fitness[iso] = {});
-                        if (metric.bloodPressure && averages[0] > 0 && averages[1] > 0) {
-                            reading.bloodPressure = { systolic: Math.round(averages[0]), diastolic: Math.round(averages[1]) };
-                        } else if (averages[0] > 0) {
-                            let value = averages[0];
-                            if (metric.glucose) value *= 18.0182;
-                            if (metric.oxygen && value <= 1) value *= 100;
-                            reading[metric.key] = Math.round(value * 10) / 10;
-                        } else return;
-                        reading[`src_${metric.key}`] = "google";
-                    });
-                } catch (e) {
-                    if (e.message === "expired") throw e;
-                    console.error(`Google Fit ${metric.key} failed`, e);
-                    notes.push(`Fit ${metric.key} unavailable (${e.message})`);
-                }
-            }));
-        }
     }
 
     async function syncGoogle() {
@@ -1893,7 +2203,7 @@
                 Object.keys(nights).forEach((iso) => {
                     if (nights[iso] > 0) {
                         const f = fitness[iso] || (fitness[iso] = {});
-                        f.sleep = Math.round((nights[iso] / 60) * 10) / 10;
+                        f.sleep = Math.min(24, Math.round((nights[iso] / 60) * 10) / 10);
                         f.src_sleep = "google";
                     }
                 });
@@ -1904,60 +2214,7 @@
                 notes.push(`Health sleep failed (${e.message})`);
             }
 
-            if (!FIT_ON) {
-                const start = civil(t0 - 13 * DAY_MS);
-                const end = civil(t0 + DAY_MS);
-                const syncDailyMetric = async (dataType, key, label, valueFromPoint) => {
-                    try {
-                        const result = await gfetch(`https://health.googleapis.com/v4/users/me/dataTypes/${dataType}/dataPoints:dailyRollUp`, {
-                            method: "POST",
-                            body: JSON.stringify({ range: { start, end }, windowSizeDays: 1, dataSourceFamily: SOURCES })
-                        });
-                        (result.rollupDataPoints || []).forEach((point) => {
-                            const date = point.civilStartTime && point.civilStartTime.date;
-                            if (!date) return;
-                            const value = Number(valueFromPoint(point));
-                            if (!Number.isFinite(value) || value <= 0) return;
-                            const iso = `${date.year}-${pad2(date.month)}-${pad2(date.day)}`;
-                            const f = fitness[iso] || (fitness[iso] = {});
-                            f[key] = Math.round(value * 10) / 10;
-                            f[`src_${key}`] = "google";
-                        });
-                    } catch (e) {
-                        if (e.message === "expired") throw e;
-                        console.error(`Google Health ${label} sync failed`, e);
-                        notes.push(`Health ${label} unavailable (${e.message})`);
-                    }
-                };
-
-                await Promise.all([
-                    syncDailyMetric("heart-rate", "heartRate", "heart rate", (point) => point.heartRate && point.heartRate.beatsPerMinuteAvg),
-                    syncDailyMetric("blood-glucose", "bloodGlucose", "blood glucose", (point) => point.bloodGlucose && point.bloodGlucose.bloodGlucoseMilligramsPerDeciliterAvg),
-                    syncDailyMetric("core-body-temperature", "bodyTemperature", "body temperature", (point) => point.coreBodyTemperature && point.coreBodyTemperature.temperatureCelsiusAvg),
-                    syncDailyMetric("hydration-log", "water", "water", (point) => point.hydrationLog && point.hydrationLog.amountConsumed && point.hydrationLog.amountConsumed.millilitersSum)
-                ]);
-
-                try {
-                    const since = isoFromUTC(t0 - 13 * DAY_MS);
-                    const oxygen = await gfetch(`https://health.googleapis.com/v4/users/me/dataTypes/daily-oxygen-saturation/dataPoints:reconcile?filter=${encodeURIComponent(`daily_oxygen_saturation.date >= "${since}"`)}`);
-                    (oxygen.dataPoints || []).forEach((point) => {
-                        const reading = point.dailyOxygenSaturation;
-                        const date = reading && reading.date;
-                        const value = Number(reading && reading.averagePercentage);
-                        if (!date || !Number.isFinite(value) || value <= 0) return;
-                        const iso = `${date.year}-${pad2(date.month)}-${pad2(date.day)}`;
-                        const f = fitness[iso] || (fitness[iso] = {});
-                        f.oxygenSaturation = Math.round(value * 10) / 10;
-                        f.src_oxygenSaturation = "google";
-                    });
-                } catch (e) {
-                    if (e.message === "expired") throw e;
-                    console.error("Google Health oxygen saturation sync failed", e);
-                    notes.push(`Health oxygen saturation unavailable (${e.message})`);
-                }
-            }
-
-            if (FIT_ON && (!stepsOk || !sleepOk)) await syncFit(notes, !stepsOk, !sleepOk, true);
+            if (FIT_ON && (!stepsOk || !sleepOk)) await syncFit(notes, !stepsOk, !sleepOk);
 
             saveFit();
             const now = new Date();
@@ -1986,42 +2243,6 @@
             s.onerror = () => reject(new Error("Could not load Google sign-in. Check your internet connection."));
             document.head.appendChild(s);
         });
-    }
-
-    async function connectGoogle() {
-        if (!HEALTH_ON) return;
-        if (location.protocol === "file:") { toast(`Open the online website to connect ${FIT_ON ? "Google Fit" : "Google Health"}.`); return; }
-        try { await loadGIS(); } catch (e) { toast(e.message); return; }
-        const client = google.accounts.oauth2.initTokenClient({
-            client_id: GID,
-            login_hint: currentUser.email || undefined,
-            scope: HEALTH_SCOPES,
-            include_granted_scopes: false,
-            callback: (resp) => {
-                if (resp.error) { toast(`Google connection stopped: ${resp.error}`); return; }
-                const requiredScopes = FIT_ON
-                    ? ["https://www.googleapis.com/auth/fitness.activity.read"]
-                    : HEALTH_SCOPES.split(" ");
-                const grantedScopes = new Set(String(resp.scope || "").split(/\s+/));
-                if (resp.scope && !requiredScopes.every((scope) => grantedScopes.has(scope))) {
-                    sessionStorage.removeItem("lifetrack-gtoken");
-                    setFitStatus("Some Google Health permissions were not granted. Connect again and approve each requested data type.", "bad");
-                    toast("Approve all requested Google Health data permissions.");
-                    return;
-                }
-                sessionStorage.setItem("lifetrack-gtoken", JSON.stringify({ token: resp.access_token, exp: Date.now() + (Number(resp.expires_in || 3600) - 60) * 1000, scopes: HEALTH_SCOPES }));
-                syncGoogle();
-            }
-        });
-        client.requestAccessToken({ prompt: "consent" });
-    }
-
-    function disconnectGoogle() {
-        const token = googleToken();
-        if (token && window.google && google.accounts && google.accounts.oauth2) google.accounts.oauth2.revoke(token, () => {});
-        sessionStorage.removeItem("lifetrack-gtoken");
-        setFitStatus("Disconnected from Google. Manual logging still works.", "");
-        renderStats();
     }
 
     /* ---------- modal + menu ---------- */
@@ -2071,7 +2292,7 @@
     }
 
     function exportData() {
-        const data = { app: "LifeTrack", version: 2, exportedAt: new Date().toISOString(), user: { name: currentUser.name, email: currentUser.email || "" }, habits, checks, habitStarts, body: bodyProfile, goals, fitness };
+        const data = { app: "LifeTrack", version: 2, exportedAt: new Date().toISOString(), user: { name: currentUser.name, email: currentUser.email || "" }, habits, checks, habitStarts, body: bodyProfile, goals, fitness, readingPlan };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
@@ -2096,7 +2317,9 @@
                 bodyProfile = data.body || null;
                 goals = Array.isArray(data.goals) ? data.goals : goals;
                 fitness = data.fitness || {};
+                readingPlan = data.readingPlan || { bookIndex: 0, bookId: "atomic-habits", pageCount: 320, currentPage: 0, dailyTarget: 10, dailyStart: 1, dailyEnd: 10, dailyDate: "", completedBooks: [] };
                 saveState(); saveGoals(); saveFit();
+                saveReadingPlan();
                 if (bodyProfile) store.set("body", JSON.stringify(bodyProfile)); else store.remove("body");
                 ensureYearOptions();
                 renderCalendar();
@@ -2109,6 +2332,7 @@
     function doLogout() {
         localStorage.removeItem("lifetrack-user");
         sessionStorage.removeItem("lifetrack-gtoken");
+        sessionStorage.removeItem("lifetrack-drive-token");
         window.location.href = "index.html";
     }
 
@@ -2132,7 +2356,7 @@
             <div class="pm-list" role="none">
                 <button type="button" role="menuitem" data-act="edit">✏️ Edit profile</button>
                 <button type="button" role="menuitem" data-act="body">⚖️ Body profile</button>
-                ${!HEALTH_ON ? "" : linked ? `<button type="button" role="menuitem" data-act="gsync">🔄 Sync Google Health</button><button type="button" role="menuitem" data-act="gdisc">🔌 Disconnect Google Health</button>` : `<button type="button" role="menuitem" data-act="gconn">🏃 Connect Google Health</button>`}
+                ${currentUser.provider === "google" ? `<span class="chip">Google Drive data sync</span><button type="button" role="menuitem" data-act="reauth">🔄 Sign in again for sync</button>` : ""}
                 <hr>
                 <button type="button" role="menuitem" data-act="export">⬇️ Download backup</button>
                 <button type="button" role="menuitem" data-act="import">⬆️ Restore backup</button>
@@ -2180,14 +2404,13 @@
             editingBody = true;
             renderDailyReminder(lastLife || computeLifetime());
             dailyReminder.scrollIntoView({ behavior: "smooth", block: "center" });
-        } else if (act === "gconn") connectGoogle();
-        else if (act === "gsync") syncGoogle();
-        else if (act === "gdisc") disconnectGoogle();
+        } else if (act === "gsync") syncGoogle();
+        else if (act === "reauth") window.location.href = "index.html";
         else if (act === "export") exportData();
         else if (act === "import") document.getElementById("importFile").click();
         else if (act === "reset") {
-            confirmModal("Delete all your data?", "This removes your habits, check-ins, goals, body profile and fitness log from this browser. Download a backup first if you might want it back.", "Delete everything", () => {
-                ["habits", "checks", "habit-start", "body", "goals", "fitness"].forEach((k) => store.remove(k));
+            confirmModal("Delete all your data?", "This removes your habits, check-ins, goals, reading progress, body profile and fitness log from this browser. Download a backup first if you might want it back.", "Delete everything", () => {
+                ["habits", "checks", "habit-start", "body", "goals", "fitness", "reading-plan"].forEach((k) => store.remove(k));
                 window.location.reload();
             });
         } else if (act === "logout") doLogout();
@@ -2204,7 +2427,6 @@
     document.getElementById("fitActions").addEventListener("click", (e) => {
         const b = e.target.closest("button");
         if (!b) return;
-        if (b.id === "gConnect") connectGoogle();
         if (b.id === "gSync") syncGoogle();
     });
 
@@ -2227,12 +2449,13 @@
     document.getElementById("fitBody").addEventListener("change", (e) => {
         const inp = e.target.closest("input[data-field]");
         if (!inp) return;
-        if (inp.dataset.field === "bloodPressure") {
-            const match = inp.value.trim().match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/);
-            setFit("bloodPressure", match ? { systolic: Number(match[1]), diastolic: Number(match[2]) } : null);
+        const v = parseFloat(inp.value);
+        if (inp.dataset.field === "sleep" && Number.isFinite(v) && (v < 0 || v > 24)) {
+            const current = (fitness[isoFromUTC(todayUTC())] || {}).sleep;
+            inp.value = current ? String(current) : "";
+            toast("Sleep can be from 0 to 24 hours per day.");
             return;
         }
-        const v = parseFloat(inp.value);
         setFit(inp.dataset.field, Number.isFinite(v) ? v : null);
     });
 
@@ -2256,6 +2479,23 @@
         if (!b) return;
         goals = goals.filter((g) => g.id !== b.dataset.goalRemove);
         saveGoals();
+        renderStats();
+    });
+
+    document.getElementById("readingGoalCard").addEventListener("change", (event) => {
+        const input = event.target.closest("input[data-reading-page-count]");
+        if (!input) return;
+        const pageCount = Number(input.value);
+        if (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > 5000) {
+            toast("Page count must be between 1 and 5,000.");
+            renderStats();
+            return;
+        }
+        readingPlan.pageCount = pageCount;
+        readingPlan.currentPage = Math.min(readingPlan.currentPage, pageCount);
+        readingPlan.dailyStart = Math.min(readingPlan.dailyStart, pageCount);
+        readingPlan.dailyEnd = Math.max(readingPlan.dailyStart, Math.min(readingPlan.dailyEnd, pageCount));
+        saveReadingPlan();
         renderStats();
     });
 
@@ -2391,6 +2631,23 @@
     });
 
     dailyReminder.addEventListener("click", (event) => {
+        const pageButton = event.target.closest("button[data-reading-page]");
+        const completeButton = event.target.closest("button[data-reading-complete]");
+        if (pageButton) {
+            prepareReadingDay();
+            readingPlan.currentPage = clamp(readingPlan.currentPage + Number(pageButton.dataset.readingPage), readingPlan.dailyStart - 1, readingPlan.pageCount);
+            saveReadingPlan();
+            renderStats();
+            return;
+        }
+        if (completeButton) {
+            const bookFinished = completeReadingGoal();
+            if (bookFinished === null) return;
+            renderStats();
+            renderCalendar();
+            toast(bookFinished ? "Book complete. Your next book is ready." : "Reading goal complete. Next pages are ready.");
+            return;
+        }
         const button = event.target.closest("button[data-plan-habit]");
         if (!button || !habits.includes(button.dataset.planHabit)) return;
         const key = keyFor(todayUTC(), button.dataset.planHabit);
@@ -2429,6 +2686,7 @@
     setLiveMonthAndYear();
     setTheme(localStorage.getItem("lifetrack-theme") === "dark");
     renderCalendar();
-    if (googleToken()) syncGoogle();
+    if (driveToken()) syncCloud().then(() => { if (googleToken()) syncGoogle(); });
+    else if (googleToken()) syncGoogle();
 
 })();

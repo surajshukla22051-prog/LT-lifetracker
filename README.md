@@ -1,10 +1,5 @@
 # LifeTrack
 
-🚀 **[Open LifeTrack](https://surajshukla22051-prog.github.io/LT-lifetracker/)**
-
-A simple and modern life tracking dashboard for managing habits, goals, routines and personal progress.
-
-
 A static LifeTrack habit-tracking dashboard.
 
 ## Run online with GitHub Pages
@@ -19,10 +14,13 @@ A static LifeTrack habit-tracking dashboard.
 
 ## Google Login
 
-The LifeTrack Google button is already implemented in `index.html`, but
-`config.js` currently contains a placeholder Client ID.
+The Google button on `index.html` signs in and requests Drive app-data access
+for cross-device LifeTrack backups. Enable the **Google Drive API** in the same
+Google Cloud project as the OAuth client, and allow the `drive.appdata` scope.
+LifeTrack stores one private JSON file in the account's hidden Drive app-data
+folder; it is not visible in normal Drive listings.
 
-After you have a Google OAuth **Web application** Client ID, put it in:
+Use a Google OAuth **Web application** Client ID in:
 
 `config.js`
 
@@ -32,4 +30,18 @@ and add this as an **Authorized JavaScript origin** in Google Cloud:
 
 Do not add `/LifeTrack/` to the authorized origin.
 
-The normal name/email login and Guest mode work without Google OAuth.
+Name/email login and Guest mode do not verify identity and remain local to the
+current browser/device. Signing in with the same typed email on another device
+does not synchronize that local account; use Google sign-in for cloud sync.
+
+## Fitness data sync
+
+Google Health sync is enabled in `config.js` with `GOOGLE_HEALTH: true` and
+`GOOGLE_FIT: false`. Enable the Google Health API and allow its activity and
+sleep read-only scopes for the same OAuth client. These permissions are
+requested during Google sign-in; there is no separate daily connect button.
+Google access tokens expire, so sign in with Google again after a session ends
+to resume cloud and health syncing. Before using health sync, sign in to the
+Google Health mobile app with the same account and finish its setup. Data
+availability depends on the account, connected devices, and recorded readings.
+Water, focus, mood, blood pressure, and unavailable device readings stay manual.
