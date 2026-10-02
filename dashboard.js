@@ -2037,8 +2037,8 @@
             : linked && healthSyncReady
             ? `<span class="chip good">● Live from Google</span><button type="button" class="secondary-button" id="gSync">Sync now</button>`
             : linked
-            ? `<span class="chip">Google sign-in active · health sync needs attention</span><button type="button" class="secondary-button" id="gSync">Retry sync</button>`
-            : `<span class="chip">Google health data not connected</span><a class="secondary-button" href="index.html">Reconnect Google</a>`;
+            ? `<span class="chip">Google sign-in active · health sync needs attention</span><button type="button" class="secondary-button" id="gSync">Retry sync</button><a class="secondary-button" href="https://fitbit.google.com/auth/signup" target="_blank" rel="noopener noreferrer">Set up Google Health</a>`
+            : `<span class="chip">Google health data not connected</span><a class="secondary-button" href="index.html">Reconnect Google</a><a class="secondary-button" href="https://fitbit.google.com/auth/signup" target="_blank" rel="noopener noreferrer">Set up Google Health</a>`;
 
         const src = (k) => (f[`src_${k}`] === "google" ? `<small class="src">from Google</small>` : "");
         const tile = (key, label, value, goal, color, text, control) => {
@@ -2099,12 +2099,14 @@
         return res.json();
     }
 
-    /* Google Fit REST API: fallback that reads the phone's Google Fit data (works only while Google still runs the Fit API). */
+    /* Google Fit REST API: reads the user's Google Fit data when legacy Fit mode is enabled. */
     async function syncFit(notes, wantSteps, wantSleep) {
         const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
         const startMs = midnight.getTime() - 13 * DAY_MS;
         const endMs = midnight.getTime() + DAY_MS;
         const isoLocal = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+        let stepsOk = !wantSteps;
+        let sleepOk = !wantSleep;
 
         if (wantSteps) {
             try {
@@ -2125,10 +2127,11 @@
                         f.steps = total; f.src_steps = "google";
                     }
                 });
+                stepsOk = true;
             } catch (e) {
                 if (e.message === "expired") throw e;
                 console.error("Google Fit steps failed", e);
-                notes.push((/insufficient/i.test(e.message) ? "Fit steps: permission missing, press Disconnect then Connect and tick ALL boxes" : `Fit steps failed (${e.message})`));
+                notes.push(`Steps: ${e.status === 403 ? `Google Fit denied access (403): ${e.message.replace(/^HTTP 403:\\s*/i, "")}` : `Google Fit request failed (${e.message})`}`);
             }
         }
 
@@ -2145,24 +2148,26 @@
                     const f = fitness[iso] || (fitness[iso] = {});
                     f.sleep = Math.min(24, Math.round((nights[iso] / 60) * 10) / 10); f.src_sleep = "google";
                 });
+                sleepOk = true;
             } catch (e) {
                 if (e.message === "expired") throw e;
                 console.error("Google Fit sleep failed", e);
-                notes.push((/insufficient/i.test(e.message) ? "Fit sleep: permission missing, press Disconnect then Connect and tick ALL boxes" : `Fit sleep failed (${e.message})`));
+                notes.push(`Sleep: ${e.status === 403 ? `Google Fit denied access (403): ${e.message.replace(/^HTTP 403:\\s*/i, "")}` : `Google Fit request failed (${e.message})`}`);
             }
         }
-
+        return { stepsOk, sleepOk };
     }
 
     function healthErrorHint(error) {
         if (/account[_ ]not[_ ]linked/i.test(error.message)) {
-            return "This Google account is not linked to Google Health yet. Set up Google Health with this same account, then retry.";
+            return "This Google account is not linked to Google Health yet. Open fitbit.google.com/auth/signup and set up Google Health with this same account, then retry.";
         }
         if (error.status === 403 && /gaia.?mint|uber.?mint/i.test(error.message)) {
-            return "Google Health rejected this account link. Sign out of the Google Health app, sign back in with this Google account, and migrate any old Fitbit account if prompted.";
+            return "Google Health rejected this account link. Sign out of the Google Health app, sign back in with this Google account, and migrate any old Fitbit account if prompted. See support.google.com/fitbit/answer/14237024.";
         }
         if (error.status === 403) {
-            return "Google Health denied access (403). Check that the Health API and requested scopes are enabled in Google Cloud, and that this Gmail is an OAuth test user if the app is in Testing.";
+            const detail = error.message.match(/^HTTP 403:\s*(.*)$/i);
+            return `Google Health denied access (403)${detail && detail[1] ? `: ${detail[1].slice(0, 180)}` : ""}. Check that the Health API and requested read-only scopes are enabled in Google Cloud, and that this Google account is linked to Google Health.`;
         }
         return `Google health request failed: ${error.message}`;
     }
@@ -2177,6 +2182,8 @@
             const t0 = todayUTC();
             const civil = (ms) => { const d = new Date(ms); return { date: { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() } }; };
             const SOURCES = "users/me/dataSourceFamilies/all-sources";
+
+            if (!FIT_ON) await gfetch("https://health.googleapis.com/v4/users/me/identity");
 
             if (!FIT_ON) try {
                 const steps = await gfetch("https://health.googleapis.com/v4/users/me/dataTypes/steps/dataPoints:dailyRollUp", {
@@ -2230,14 +2237,19 @@
                 notes.push(`Sleep: ${healthErrorHint(e)}`);
             }
 
-            if (FIT_ON && (!stepsOk || !sleepOk)) await syncFit(notes, !stepsOk, !sleepOk);
+            if (FIT_ON && (!stepsOk || !sleepOk)) {
+                const fitStatus = await syncFit(notes, !stepsOk, !sleepOk);
+                stepsOk = fitStatus.stepsOk;
+                sleepOk = fitStatus.sleepOk;
+            }
 
             saveFit();
             healthSyncReady = stepsOk && sleepOk;
             const now = new Date();
+            const sourceName = FIT_ON ? "Google Fit" : "Google Health";
             setFitStatus(healthSyncReady
                 ? `[v5 ${FIT_ON ? "fit" : "health"}] Synced at ${pad2(now.getHours())}:${pad2(now.getMinutes())}${notes.length ? `. Skipped: ${notes.join(", ")}` : ""}`
-                : `Google health sync failed. ${notes.join(" ")}`, healthSyncReady ? (notes.length ? "warn" : "good") : "bad");
+                : `${sourceName} sync failed. ${notes.join(" ")}`, healthSyncReady ? (notes.length ? "warn" : "good") : "bad");
         } catch (e) {
             healthSyncReady = false;
             setFitStatus(e.message === "expired"

@@ -40,24 +40,32 @@ you return to its tab.
 
 ## Fitness data sync
 
-LifeTrack currently reads fitness data through Google Health, enabled in
-`config.js` with `GOOGLE_HEALTH: true` and `GOOGLE_FIT: false`; it does not use
-the legacy Google Fit API. Enable the Google Health API and allow its activity
-and sleep read-only scopes for the same OAuth client. These permissions are
-requested during Google sign-in. If Fitness Today says health data is not
-connected, choose **Reconnect Google** there and allow the requested scopes.
-Google access tokens expire, so sign in with Google again after a session ends
-to resume cloud and health syncing. Before using health sync, sign in to the
-Google Health mobile app with the same account and finish its setup. Data
-availability depends on the account, connected devices, and recorded readings.
-Water, focus, mood, blood pressure, and unavailable device readings stay manual.
+LifeTrack can import steps and sleep from either Google Fit or Google Health.
+`config.js` selects the source: `GOOGLE_FIT: true` uses the legacy Fit API and
+its read-only Fit scopes; `GOOGLE_FIT: false` with `GOOGLE_HEALTH: true` uses
+Google Health and its read-only Health scopes. The two scope families are not
+requested together. The current local setting selects Google Fit. Enable the
+matching API and scopes in Google Cloud for this OAuth client. After changing
+the source, sign in with Google again and grant the newly requested permissions.
 
-If health sync returns HTTP 403, Google sign-in alone may not mean that the
-account has an active Google Health profile. Sign in to the Google Health app
-with the same Google account first. If Google reports an old Fitbit account,
-complete its migration to that Google account, then retry **Sync now**. Also
-check that Google Health API and the requested scopes are enabled in the
-Google Cloud project, and add the Gmail address as an OAuth test user while
-the consent screen is in Testing. See Google's
+For Google Health mode, Fitness Today checks the Google Health identity before
+importing readings. If the account is not linked, choose **Set up Google
+Health** there and complete setup with the same Google account. If prompted
+about a legacy Fitbit account, migrate it to that Google account, then choose
+**Retry sync**. For Google Fit mode, the legacy API must still be available to
+the project and account; it is deprecated and may stop working. Google access
+tokens expire, so sign in with Google again after a session ends to resume cloud
+and health syncing. Data availability depends on the account, connected devices,
+and recorded readings. Successfully imported health readings show **from
+Google**; manually entered values remain separate. Water, focus, mood, and
+unavailable device readings stay manual.
+
+If health sync returns HTTP 403, read the full response shown in Fitness Today.
+In Google Health mode, `Could not mint UberMint from GaiaMint` means the Google
+Health account link was rejected: sign out of the Google Health app, sign back
+in with the intended Google account, and complete any requested Fitbit-account
+migration. Google sign-in alone does not create an active Google Health profile.
+In Google Fit mode, make sure the Fit API and requested Fit read-only scopes are
+enabled, then sign in again to grant those scopes. See Google's
 [Health API setup](https://developers.google.com/health/setup) and
 [troubleshooting guide](https://developers.google.com/health/troubleshooting).
