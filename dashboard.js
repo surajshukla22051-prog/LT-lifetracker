@@ -947,6 +947,7 @@
     let ctx = null;
     let fitStatus = { text: "", kind: "" };
     let syncing = false;
+    let healthSyncReady = false;
 
     function esc(s) {
         return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2033,8 +2034,10 @@
         const linked = Boolean(googleToken());
 
         acts.innerHTML = !HEALTH_ON ? ""
-            : linked
+            : linked && healthSyncReady
             ? `<span class="chip good">● Live from Google</span><button type="button" class="secondary-button" id="gSync">Sync now</button>`
+            : linked
+            ? `<span class="chip">Google sign-in active · health sync needs attention</span><button type="button" class="secondary-button" id="gSync">Retry sync</button>`
             : `<span class="chip">Google health data not connected</span><a class="secondary-button" href="index.html">Reconnect Google</a>`;
 
         const src = (k) => (f[`src_${k}`] === "google" ? `<small class="src">from Google</small>` : "");
@@ -2066,7 +2069,7 @@
             ${metricTile("Distance", distanceKm.toFixed(2), "km estimated", tg.steps ? (steps / tg.steps) * 100 : 0, "var(--primary)", `${distanceKm.toFixed(2)} kilometers estimated from ${steps} steps`, hasProfile ? "steps + plan height" : "steps · average stride")}
         </div>
         <div class="mood-row"><span>How do you feel today?</span><div>${moods.map((e, i) => `<button type="button" class="mood-btn${f.mood === i + 1 ? " on" : ""}" data-mood="${i + 1}" aria-label="Mood ${i + 1} of 5" aria-pressed="${f.mood === i + 1}">${e}</button>`).join("")}</div></div>
-        <p id="fitStatus" class="fit-status ${fitStatus.kind}">${esc(fitStatus.text || (linked ? "Connected. Google readings refresh every minute when available." : (HEALTH_ON ? "Reconnect Google and allow the health permissions to import readings." : "Log your steps, water, sleep, focus and health readings by hand.")))}</p>`;
+        <p id="fitStatus" class="fit-status ${fitStatus.kind}">${esc(fitStatus.text || (linked ? (healthSyncReady ? "Connected. Google readings refresh every minute when available." : "Google sign-in is active; checking whether this account can share health readings.") : (HEALTH_ON ? "Reconnect Google and allow the health permissions to import readings." : "Log your steps, water, sleep, focus and health readings by hand.")))}</p>`;
         animateRings(box);
     }
 
@@ -2151,6 +2154,19 @@
 
     }
 
+    function healthErrorHint(error) {
+        if (/account[_ ]not[_ ]linked/i.test(error.message)) {
+            return "This Google account is not linked to Google Health yet. Set up Google Health with this same account, then retry.";
+        }
+        if (error.status === 403 && /gaia.?mint|uber.?mint/i.test(error.message)) {
+            return "Google Health rejected this account link. Sign out of the Google Health app, sign back in with this Google account, and migrate any old Fitbit account if prompted.";
+        }
+        if (error.status === 403) {
+            return "Google Health denied access (403). Check that the Health API and requested scopes are enabled in Google Cloud, and that this Gmail is an OAuth test user if the app is in Testing.";
+        }
+        return `Google health request failed: ${error.message}`;
+    }
+
     async function syncGoogle() {
         if (!googleToken() || syncing) return;
         syncing = true;
@@ -2179,7 +2195,7 @@
             } catch (e) {
                 if (e.message === "expired") throw e;
                 console.error("Google steps sync failed", e);
-                notes.push(`Health steps failed (${e.message})`);
+                notes.push(`Steps: ${healthErrorHint(e)}`);
             }
 
             if (!FIT_ON) try {
@@ -2211,22 +2227,22 @@
             } catch (e) {
                 if (e.message === "expired") throw e;
                 console.error("Google sleep sync failed", e);
-                notes.push(`Health sleep failed (${e.message})`);
+                notes.push(`Sleep: ${healthErrorHint(e)}`);
             }
 
             if (FIT_ON && (!stepsOk || !sleepOk)) await syncFit(notes, !stepsOk, !sleepOk);
 
             saveFit();
+            healthSyncReady = stepsOk && sleepOk;
             const now = new Date();
-            setFitStatus(`[v5 ${FIT_ON ? "fit" : "health"}] Synced at ${pad2(now.getHours())}:${pad2(now.getMinutes())}${notes.length ? `. Skipped: ${notes.join(", ")}` : ""}`, notes.length ? "warn" : "good");
+            setFitStatus(healthSyncReady
+                ? `[v5 ${FIT_ON ? "fit" : "health"}] Synced at ${pad2(now.getHours())}:${pad2(now.getMinutes())}${notes.length ? `. Skipped: ${notes.join(", ")}` : ""}`
+                : `Google health sync failed. ${notes.join(" ")}`, healthSyncReady ? (notes.length ? "warn" : "good") : "bad");
         } catch (e) {
-            const accountNotLinked = /account[_ ]not[_ ]linked/i.test(e.message);
-            if (accountNotLinked) sessionStorage.removeItem("lifetrack-gtoken");
+            healthSyncReady = false;
             setFitStatus(e.message === "expired"
-                ? "Google session ended. Press Connect Google Health to link again."
-                : accountNotLinked
-                    ? "Open Google Health on this same Google account, finish linking it, then connect again."
-                    : `Google sync failed: ${e.message}`, "bad");
+                ? "Google session ended. Press Reconnect Google to link again."
+                : healthErrorHint(e), "bad");
         } finally {
             syncing = false;
             renderStats();
