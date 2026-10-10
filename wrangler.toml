@@ -1,0 +1,18 @@
+name = "lifetrack-ai"
+main = "index.js"
+compatibility_date = "2026-10-10"
+
+[vars]
+# Replace with the exact HTTPS origin serving LifeTrack; multiple origins can be comma-separated.
+ALLOWED_ORIGINS = "https://surajshukla22051-prog.github.io"
+GROQ_MODEL = "openai/gpt-oss-120b"
+VAPID_PUBLIC_KEY = "BNLQSDCrXNnh_rB69eqFLA5vGXGTJbuMjCMrQcgIUCDnfOKJWvHok3xY3uMV3UF2mNJXDSfGFr1E6XCovKyCbgI"
+VAPID_SUBJECT = "https://surajshukla22051-prog.github.io"
+SITE_URL = "https://surajshukla22051-prog.github.io/LT-lifetracker/"
+
+[[kv_namespaces]]
+binding = "PUSH_SUBSCRIPTIONS"
+id = "33db829a26e2482a8ffb0fd2e7057650"
+
+[triggers]
+crons = ["* * * * *"]
