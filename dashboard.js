@@ -995,6 +995,9 @@
     let aiPlanTasks = loadAssistantState("ai-plan", []);
     let aiConversation = loadAssistantState("ai-conversation", []);
     let aiReminder = loadAssistantState("ai-reminder", { reminders: [] });
+    const AI_HISTORY_MESSAGE_LIMIT = 48;
+    const AI_REQUEST_MESSAGE_LIMIT = 48;
+    const AI_REQUEST_MESSAGE_CHARS = 800;
     if (!Array.isArray(aiNotes)) aiNotes = [];
     if (!Array.isArray(aiPlanTasks)) aiPlanTasks = [];
     if (!Array.isArray(aiConversation)) aiConversation = [];
@@ -2759,7 +2762,7 @@
             role: "assistant",
             content: "Hi! I can help with habits, goals, notes, and extra tasks for your Daily Body & Mind Plan. Ask me to suggest or make changes; I will show you a review before saving."
         }];
-        messages.slice(-40).forEach((message) => {
+        messages.slice(-AI_HISTORY_MESSAGE_LIMIT).forEach((message) => {
             const bubble = document.createElement("div");
             bubble.className = `ai-message ${message.role === "user" ? "user" : "assistant"}`;
             bubble.textContent = message.content;
@@ -3012,7 +3015,7 @@
         const voiceStatus = document.getElementById("aiVoiceStatus");
         promptInput.value = "";
         aiConversation.push({ role: "user", content: prompt });
-        aiConversation = aiConversation.slice(-40);
+        aiConversation = aiConversation.slice(-AI_HISTORY_MESSAGE_LIMIT);
         saveAssistantState("ai-conversation", aiConversation);
         renderAIMessages();
         sendButton.disabled = true;
@@ -3023,7 +3026,10 @@
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    messages: aiConversation.slice(-8).map((item) => ({ role: item.role, content: item.content.slice(-800) })),
+                    messages: aiConversation.slice(-AI_REQUEST_MESSAGE_LIMIT).map((item) => ({
+                        role: item.role,
+                        content: item.content.slice(-AI_REQUEST_MESSAGE_CHARS)
+                    })),
                     context: aiContext()
                 })
             });
@@ -3034,7 +3040,7 @@
             if (!response.ok) throw new Error(data.error || `AI request failed (HTTP ${response.status}).`);
             if (typeof data.reply !== "string" || !Array.isArray(data.actions)) throw new Error("The AI service response was incomplete.");
             aiConversation.push({ role: "assistant", content: data.reply.slice(0, 4000) });
-            aiConversation = aiConversation.slice(-40);
+            aiConversation = aiConversation.slice(-AI_HISTORY_MESSAGE_LIMIT);
             saveAssistantState("ai-conversation", aiConversation);
             renderAIMessages();
             if (data.actions.length) {
@@ -3042,7 +3048,7 @@
                     showAIProposals(validateAiActions(data.actions));
                 } catch (error) {
                     aiConversation.push({ role: "assistant", content: `I skipped a proposed change because it was invalid: ${error.message}` });
-                    aiConversation = aiConversation.slice(-40);
+                    aiConversation = aiConversation.slice(-AI_HISTORY_MESSAGE_LIMIT);
                     saveAssistantState("ai-conversation", aiConversation);
                     renderAIMessages();
                 }
@@ -3051,9 +3057,9 @@
         } catch (error) {
             const message = location.protocol === "file:"
                 ? "This dashboard is open as a local file, so the browser blocks its AI connection. Open the hosted HTTPS LifeTrack page to use the assistant."
-                : `I couldn't reach the AI service: ${error.message}`;
+                : `AI service error: ${error.message}`;
             aiConversation.push({ role: "assistant", content: message });
-            aiConversation = aiConversation.slice(-40);
+            aiConversation = aiConversation.slice(-AI_HISTORY_MESSAGE_LIMIT);
             saveAssistantState("ai-conversation", aiConversation);
             renderAIMessages();
             voiceStatus.textContent = message;

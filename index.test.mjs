@@ -160,3 +160,88 @@ test("scheduled Web Push uses VAPID and sends decryptable encrypted reminders", 
         globalThis.fetch = originalFetch;
     }
 });
+
+test("assistant reports the bounded Groq error detail when Groq rejects a request", async () => {
+    const origin = "https://surajshukla22051-prog.github.io";
+    const env = {
+        ALLOWED_ORIGINS: origin,
+        GROQ_API_KEY: "test-key",
+        GROQ_MODEL: "openai/gpt-oss-120b"
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({
+        error: { message: "Unsupported parameter: temperature", type: "invalid_request_error" }
+    }), { status: 400, headers: { "Content-Type": "application/json" } });
+
+    try {
+        const result = await worker.fetch(new Request("https://worker.test/api/assistant", {
+            method: "POST",
+            headers: { Origin: origin, "Content-Type": "application/json" },
+            body: JSON.stringify({
+                context: { habits: [] },
+                messages: [{ role: "user", content: "Hello." }]
+            })
+        }), env, {});
+
+        assert.equal(result.status, 502);
+        assert.deepEqual(await result.json(), {
+            error: "Groq request failed (HTTP 400): Unsupported parameter: temperature"
+        });
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("assistant accepts and forwards the latest 24 chat exchanges", async () => {
+    const origin = "https://surajshukla22051-prog.github.io";
+    const env = {
+        ALLOWED_ORIGINS: origin,
+        GROQ_API_KEY: "test-key",
+        GROQ_MODEL: "openai/gpt-oss-120b"
+    };
+    const originalFetch = globalThis.fetch;
+    let groqMessages;
+    globalThis.fetch = async (_url, options) => {
+        groqMessages = JSON.parse(options.body).messages;
+        return new Response(JSON.stringify({
+            choices: [{ message: { content: JSON.stringify({ reply: "I remember.", actions: [] }) } }]
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+
+    try {
+        const messages = Array.from({ length: 48 }, (_, index) => ({
+            role: index === 47 ? "user" : index % 2 === 0 ? "user" : "assistant",
+            content: `chat-${index} ${"x".repeat(690)}`
+        }));
+        const result = await worker.fetch(new Request("https://worker.test/api/assistant", {
+            method: "POST",
+            headers: {
+                Origin: origin,
+                "CF-Connecting-IP": "memory-test",
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ context: { habits: [] }, messages })
+        }), env, {});
+
+        assert.equal(result.status, 200);
+        assert.equal(groqMessages.length, 50);
+        assert.match(groqMessages[2].content, /^chat-0 /);
+        assert.match(groqMessages.at(-1).content, /^chat-47 /);
+
+        const tooManyMessages = await worker.fetch(new Request("https://worker.test/api/assistant", {
+            method: "POST",
+            headers: {
+                Origin: origin,
+                "CF-Connecting-IP": "memory-limit-test",
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                context: { habits: [] },
+                messages: [...messages, { role: "assistant", content: "extra" }]
+            })
+        }), env, {});
+        assert.equal(tooManyMessages.status, 400);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});

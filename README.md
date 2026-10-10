@@ -34,7 +34,9 @@ speech input/output, private notes, and review-before-save suggestions for
 habits, goals, Daily Body & Mind Plan preferences, and extra plan tasks. Notes and custom
 plan tasks are stored in this browser/account namespace and included in manual
 LifeTrack backup files; AI chat history stays in this browser and is not sent
-with backups. When you send a prompt, LifeTrack sends the recent chat, habit
+with backups. The assistant keeps up to 24 recent user/assistant exchanges in
+this browser and sends those recent messages with each prompt so it can follow
+up on earlier details. When you send a prompt, LifeTrack sends the recent chat, habit
 names, goal summary, a seven-day check-in count, and limited plan preferences
 to Groq through the Worker. It does not send body measurements or saved notes
 as context. Avoid including sensitive health or personal information in chat.

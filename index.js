@@ -3,7 +3,7 @@ const WINDOW_MS = 60_000;
 const LIMIT = 10;
 const requestsByClient = new Map();
 
-const SYSTEM_PROMPT = `You are LifeTrack AI, a supportive habit and wellness coach. Reply in the user's language (including Hindi/Hinglish when they use it). Be concise, practical, non-judgmental, and never diagnose, prescribe treatment, or recommend extreme diets, unsafe exercise, or ignoring pain. Use only the provided LifeTrack summary; do not claim to have changed data. Ask a brief clarifying question when needed.
+const SYSTEM_PROMPT = `You are LifeTrack AI, a warm, energetic, attentive habit and wellness coach. Reply in the user's language (including Hindi/Hinglish when they use it). Be concise, practical, non-judgmental, and never diagnose, prescribe treatment, or recommend extreme diets, unsafe exercise, or ignoring pain. Use the recent conversation to remember what the user said, connect follow-ups to earlier details, and avoid asking them to repeat themselves. Use only the provided LifeTrack summary; do not claim to have changed data. Be engaged: acknowledge their update, celebrate genuine progress, notice a relevant pattern in their provided tracker, and offer one small useful next step or a friendly follow-up question when it fits. Avoid repetitive praise, excessive questions, or unsolicited long plans.
 
 Return one JSON object with exactly these keys: "reply" (string) and "actions" (array, at most 5). Actions are OPTIONAL suggestions and must use only these exact shapes:
 {"type":"habit_add","name":"..."}
@@ -18,7 +18,7 @@ Return one JSON object with exactly these keys: "reply" (string) and "actions" (
 {"type":"plan_remove","id":"an existing custom plan task id"}
 {"type":"note_add","text":"..."}
 
-Only propose actions explicitly requested by the user. Never invent ids; copy ids exactly from the supplied summary. For removal or replacement, clearly state what will be removed in reply. Keep habit/goal names <= 60 chars, plan title <= 80 chars, details <= 240 chars, note <= 1000 chars. Goal target is an integer from 10 to 100. Do not use markdown or extra JSON keys.`;
+Only propose actions explicitly requested by the user. Never invent ids; copy ids exactly from the supplied summary. Do not treat friendly engagement as permission to change data. For removal or replacement, clearly state what will be removed in reply. Keep habit/goal names <= 60 chars, plan title <= 80 chars, details <= 240 chars, note <= 1000 chars. Goal target is an integer from 10 to 100. Do not use markdown or extra JSON keys.`;
 
 function response(body, status, origin) {
     return new Response(JSON.stringify(body), {
@@ -61,9 +61,10 @@ function clientRateLimited(request) {
 function validMessages(body) {
     return Array.isArray(body.messages)
         && body.messages.length > 0
-        && body.messages.length <= 12
+        && body.messages.length <= 48
         && body.messages[body.messages.length - 1]
         && body.messages[body.messages.length - 1].role === "user"
+        && body.messages.reduce((total, message) => total + (message && typeof message.content === "string" ? message.content.length : 0), 0) <= 40_000
         && body.messages.every((message) =>
             message
             && ["user", "assistant"].includes(message.role)
@@ -201,7 +202,7 @@ function validClientId(value) {
 async function handlePushSubscription(request, env, origin) {
     if (!env.PUSH_SUBSCRIPTIONS) return response({ error: "Background reminders are not configured on the Worker yet." }, 503, origin);
     const contentLength = Number(request.headers.get("Content-Length") || 0);
-    if (contentLength > 20_000) return response({ error: "Request is too large." }, 413, origin);
+    if (contentLength > 56_000) return response({ error: "Request is too large." }, 413, origin);
     let body;
     try {
         body = await request.json();
@@ -416,7 +417,20 @@ export default {
             const status = groqResponse.status;
             if (status === 401 || status === 403) return response({ error: "Groq rejected the API key. Check the GROQ_API_KEY Worker secret." }, 502, origin);
             if (status === 429) return response({ error: "Groq rate limit reached. Please wait and try again." }, 429, origin);
-            return response({ error: `Groq request failed (HTTP ${status}).` }, 502, origin);
+            let detail = "";
+            try {
+                const errorBody = await groqResponse.json();
+                if (errorBody.error && typeof errorBody.error.message === "string") {
+                    detail = errorBody.error.message.replace(/[\r\n\t]+/g, " ").slice(0, 300);
+                }
+            } catch {
+                detail = "";
+            }
+            const message = detail
+                ? `Groq request failed (HTTP ${status}): ${detail}`
+                : `Groq request failed (HTTP ${status}).`;
+            console.error("Groq rejected LifeTrack assistant request.", { status, model: env.GROQ_MODEL || MODEL, detail });
+            return response({ error: message }, 502, origin);
         }
 
         let result;
