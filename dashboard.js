@@ -74,6 +74,7 @@
         "No junk food"
     ];
     let dailyTaskState = JSON.parse(store.get("daily-task") || "null");
+    let deletedHabits = JSON.parse(store.get("deleted-habits") || "{}");
     let checks = JSON.parse(store.get("checks")) || {};
     let habitStarts = JSON.parse(store.get("habit-start") || "{}");
     let bodyProfile = JSON.parse(store.get("body") || "null");
@@ -225,6 +226,37 @@
         store.set("habits", JSON.stringify(habits));
         store.set("checks", JSON.stringify(checks));
         store.set("habit-start", JSON.stringify(habitStarts));
+        store.set("deleted-habits", JSON.stringify(deletedHabits));
+    }
+
+    function mergeDeletedHabits(local, remote) {
+        const merged = {};
+        const merge = (changes) => Object.entries(changes || {}).forEach(([name, value]) => {
+            const change = value && typeof value === "object"
+                ? { at: Number(value.at) || 0, deleted: Boolean(value.deleted) }
+                : { at: Number(value) || 0, deleted: true };
+            const previous = merged[name];
+            if (!previous || change.at > previous.at) merged[name] = change;
+            else if (change.at === previous.at) previous.deleted = previous.deleted || change.deleted;
+        });
+        merge(remote);
+        merge(local);
+        return merged;
+    }
+
+    function mergeHabitNames(local, remote, removed) {
+        return Array.from(new Set([...(remote || []), ...(local || [])].map(String)))
+            .filter((name) => !(removed[name] && removed[name].deleted));
+    }
+
+    function markHabitDeleted(name) {
+        const previousAt = deletedHabits[name] && typeof deletedHabits[name] === "object" ? Number(deletedHabits[name].at) || 0 : 0;
+        deletedHabits[name] = { at: Math.max(Date.now(), previousAt + 1), deleted: true };
+    }
+
+    function restoreHabitName(name) {
+        const previousAt = deletedHabits[name] && typeof deletedHabits[name] === "object" ? Number(deletedHabits[name].at) || 0 : 0;
+        deletedHabits[name] = { at: Math.max(Date.now(), previousAt + 1), deleted: false };
     }
 
     function getDaysInSelectedMonth() {
@@ -1880,6 +1912,8 @@
         goals.forEach((goal) => {
             if (goal.habit === oldName) goal.habit = newName;
         });
+        markHabitDeleted(oldName);
+        restoreHabitName(newName);
         habits[habits.indexOf(oldName)] = newName;
     }
 
@@ -2227,6 +2261,7 @@
             version: 1,
             updatedAt: Number(localStorage.getItem(NS + "cloud-updated-at")) || Date.now(),
             habits,
+            deletedHabits,
             checks,
             habitStarts,
             body: bodyProfile,
@@ -2271,7 +2306,10 @@
 
             if (remote && remote.app === "LifeTrack" && Number(remote.updatedAt) > localUpdatedAt && !hasLocalChanges) {
                 cloudApplying = true;
-                habits = Array.isArray(remote.habits) ? remote.habits.map(String) : habits;
+                deletedHabits = mergeDeletedHabits(deletedHabits, remote.deletedHabits);
+                habits = Array.isArray(remote.habits)
+                    ? remote.habits.map(String).filter((name) => !(deletedHabits[name] && deletedHabits[name].deleted))
+                    : habits.filter((name) => !(deletedHabits[name] && deletedHabits[name].deleted));
                 checks = remote.checks && typeof remote.checks === "object" ? remote.checks : checks;
                 habitStarts = remote.habitStarts && typeof remote.habitStarts === "object" ? remote.habitStarts : habitStarts;
                 bodyProfile = remote.body || null;
@@ -2280,6 +2318,7 @@
                 readingPlan = remote.readingPlan && typeof remote.readingPlan === "object" ? remote.readingPlan : readingPlan;
                 dailyTaskState = remote.dailyTask && typeof remote.dailyTask === "object" ? remote.dailyTask : dailyTaskState;
                 store.set("habits", JSON.stringify(habits));
+                store.set("deleted-habits", JSON.stringify(deletedHabits));
                 store.set("checks", JSON.stringify(checks));
                 store.set("habit-start", JSON.stringify(habitStarts));
                 if (bodyProfile) store.set("body", JSON.stringify(bodyProfile)); else store.remove("body");
@@ -2304,7 +2343,8 @@
                     (goals || []).forEach((goal) => mergedGoals.set(goal.id, goal));
                     snapshot = Object.assign({}, snapshot, {
                         updatedAt: Math.max(Date.now(), Number(remote.updatedAt) || 0),
-                        habits: Array.from(new Set([...(remote.habits || []), ...habits])),
+                        deletedHabits: mergeDeletedHabits(deletedHabits, remote.deletedHabits),
+                        habits: [],
                         checks: Object.assign({}, remote.checks || {}, checks),
                         habitStarts: Object.assign({}, remote.habitStarts || {}, habitStarts),
                         body: bodyProfile || remote.body || null,
@@ -2313,7 +2353,9 @@
                         readingPlan: (Number(readingPlan.currentPage) || 0) > (Number((remote.readingPlan || {}).currentPage) || 0) ? readingPlan : (remote.readingPlan || readingPlan),
                         dailyTask: mergeDailyTaskState(dailyTaskState, remote.dailyTask)
                     });
+                    snapshot.habits = mergeHabitNames(habits, remote.habits, snapshot.deletedHabits);
                     habits = snapshot.habits;
+                    deletedHabits = snapshot.deletedHabits;
                     checks = snapshot.checks;
                     habitStarts = snapshot.habitStarts;
                     bodyProfile = snapshot.body;
@@ -2323,6 +2365,7 @@
                     dailyTaskState = snapshot.dailyTask;
                     cloudApplying = true;
                     store.set("habits", JSON.stringify(habits));
+                    store.set("deleted-habits", JSON.stringify(deletedHabits));
                     store.set("checks", JSON.stringify(checks));
                     store.set("habit-start", JSON.stringify(habitStarts));
                     if (bodyProfile) store.set("body", JSON.stringify(bodyProfile)); else store.remove("body");
@@ -2895,11 +2938,13 @@
         }
         pendingAiActions.forEach((action) => {
             if (action.type === "habit_add") {
+                restoreHabitName(action.name);
                 habits.push(action.name);
                 habitStarts[action.name] = isoFromUTC(todayUTC());
             } else if (action.type === "habit_edit") {
                 renameHabitData(action.oldName, action.name);
             } else if (action.type === "habit_remove") {
+                markHabitDeleted(action.name);
                 delete habitStarts[action.name];
                 habits = habits.filter((habit) => habit !== action.name);
                 goals = goals.filter((goal) => goal.habit !== action.name);
@@ -3019,7 +3064,7 @@
     }
 
     function exportData() {
-        const data = { app: "LifeTrack", version: 3, exportedAt: new Date().toISOString(), user: { name: currentUser.name, email: currentUser.email || "" }, habits, checks, habitStarts, body: bodyProfile, goals, fitness, readingPlan, dailyTask: dailyTaskState, aiNotes, aiPlanTasks };
+        const data = { app: "LifeTrack", version: 3, exportedAt: new Date().toISOString(), user: { name: currentUser.name, email: currentUser.email || "" }, habits, deletedHabits, checks, habitStarts, body: bodyProfile, goals, fitness, readingPlan, dailyTask: dailyTaskState, aiNotes, aiPlanTasks };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
@@ -3039,6 +3084,8 @@
             if (!data || data.app !== "LifeTrack" || !Array.isArray(data.habits) || typeof data.checks !== "object") { toast("That is not a LifeTrack backup."); return; }
             confirmModal("Replace your data?", `This will replace your current habits, check-ins, goals, fitness log, AI notes and custom plan tasks with the backup from ${data.exportedAt ? data.exportedAt.slice(0, 10) : "the file"}.`, "Replace data", () => {
                 habits = data.habits.map(String);
+                deletedHabits = mergeDeletedHabits({}, data.deletedHabits);
+                habits = habits.filter((name) => !(deletedHabits[name] && deletedHabits[name].deleted));
                 checks = data.checks || {};
                 habitStarts = data.habitStarts || {};
                 bodyProfile = data.body || null;
@@ -3173,7 +3220,7 @@
                     toast(`Could not remove background reminders: ${error.message}`);
                     return;
                 }
-                ["habits", "checks", "habit-start", "body", "goals", "fitness", "reading-plan", "daily-task", "ai-notes", "ai-plan", "ai-conversation", "ai-reminder", "ai-reminder-push-client"].forEach((k) => store.remove(k));
+                ["habits", "checks", "habit-start", "deleted-habits", "body", "goals", "fitness", "reading-plan", "daily-task", "ai-notes", "ai-plan", "ai-conversation", "ai-reminder", "ai-reminder-push-client"].forEach((k) => store.remove(k));
                 window.location.reload();
             });
         } else if (act === "logout") doLogout();
@@ -3544,7 +3591,8 @@
         const idx = Number(b.dataset.remove);
         const name = habits[idx];
         confirmModal(`Remove "${name}"?`, "The habit disappears from your tracker and its goals are removed. Its old check-ins stay saved in case you add the same name again.", "Remove habit", () => {
-            delete habitStarts[name];
+        markHabitDeleted(name);
+        delete habitStarts[name];
             habits.splice(idx, 1);
             goals = goals.filter((g) => g.habit !== name);
             saveGoals();
@@ -3763,6 +3811,7 @@
         const habit = input.value.trim();
         if (!habit || habits.includes(habit)) return;
 
+        restoreHabitName(habit);
         habits.push(habit);
         habitStarts[habit] = isoFromUTC(todayUTC());
         input.value = "";
