@@ -73,6 +73,7 @@
         "Meditation",
         "No junk food"
     ];
+    let dailyTaskState = JSON.parse(store.get("daily-task") || "null");
     let checks = JSON.parse(store.get("checks")) || {};
     let habitStarts = JSON.parse(store.get("habit-start") || "{}");
     let bodyProfile = JSON.parse(store.get("body") || "null");
@@ -475,6 +476,7 @@
         const life = computeLifetime();
         lastLife = life;
         ctx = buildContext(life);
+        renderDailyTask();
         renderProgressGauge(percent);
         renderHabitLegend();
         renderCompletedCard(dailyTotals);
@@ -500,14 +502,6 @@
     }
 
     window.addEventListener("resize", syncStreakPanelHeight, { passive: true });
-
-    const streakList = document.getElementById("streakList");
-    let streakScrollTimer;
-    streakList.addEventListener("scroll", () => {
-        streakList.classList.add("is-scrolling");
-        window.clearTimeout(streakScrollTimer);
-        streakScrollTimer = window.setTimeout(() => streakList.classList.remove("is-scrolling"), 700);
-    }, { passive: true });
 
     // Overall Progress = the selected month only. It starts from 0% on the 1st of every month.
     function renderProgressGauge(percent) {
@@ -671,6 +665,7 @@
         const readHabit = habits.find((habit) => habit.toLowerCase() === "read");
         if (readHabit) checks[keyFor(todayUTC(), readHabit)] = true;
         saveReadingPlan();
+        if (dailyTaskState) store.set("daily-task", JSON.stringify(dailyTaskState)); else store.remove("daily-task");
         if (readHabit) saveState();
         return finishedBook;
     }
@@ -880,6 +875,13 @@
         html += `<div class="reminder-tip">💡 ${tip}</div>
             <p class="reminder-note">Level follows your all-time progress since your first tick. General wellness guide, not medical advice.</p>`;
 
+        if (aiPlanTasks.length) {
+            html += `<div class="ai-plan-tasks"><h3>My plan tasks</h3><ul>${aiPlanTasks.map((task) => {
+                const done = task.doneDate === isoFromUTC(todayUTC());
+                return `<li class="${done ? "done" : ""}"><span><strong>${esc(task.title)}</strong>${task.details ? `<small>${esc(task.details)}</small>` : ""}</span><button type="button" class="plan-done${done ? " done" : ""}" data-ai-plan-done="${esc(task.id)}" aria-pressed="${done}">${done ? "Done ✓" : "Mark done"}</button></li>`;
+            }).join("")}</ul></div>`;
+        }
+
         dailyReminder.innerHTML = html;
         wireBodyForm();
     }
@@ -922,17 +924,14 @@
     const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const PALETTE = ["#4da6ff", "#22d3ee", "#a78bfa", "#f472b6", "#fbbf24", "#34d399", "#fb7185", "#60a5fa"];
     const FIT_ON = Boolean(CFG.GOOGLE_FIT);
-    const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
     // Google Health API rejects tokens that also carry old Fit scopes, so only ONE family is ever requested.
-    const HEALTH_SCOPES = Boolean(CFG.GOOGLE_FIT) ? [
+    const HEALTH_SCOPES = (FIT_ON ? [
         "https://www.googleapis.com/auth/fitness.activity.read",
         "https://www.googleapis.com/auth/fitness.sleep.read"
-    ] : Boolean(CFG.GOOGLE_HEALTH) ? [
+    ] : [
         "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
         "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
-    ] : [];
-    const LOGIN_SCOPES = ["openid", "email", "profile", DRIVE_SCOPE, ...HEALTH_SCOPES];
-    const GOOGLE_READY = /^[0-9]+-.+\.apps\.googleusercontent\.com$/.test(GID);
+    ]).join(" ");
 
     let goals = JSON.parse(store.get("goals") || "null") || [
         { id: "g-all", name: "Monthly consistency", habit: "*", target: 80 }
@@ -950,8 +949,46 @@
     let ctx = null;
     let fitStatus = { text: "", kind: "" };
     let syncing = false;
-    let healthSyncReady = false;
-    let manualSleepEditing = false;
+    function loadAssistantState(key, fallback) {
+        const raw = store.get(key);
+        if (!raw) return fallback;
+        try {
+            return JSON.parse(raw);
+        } catch (error) {
+            console.error(`LifeTrack assistant data "${key}" could not be read.`, error);
+            return fallback;
+        }
+    }
+    let aiNotes = loadAssistantState("ai-notes", []);
+    let aiPlanTasks = loadAssistantState("ai-plan", []);
+    let aiConversation = loadAssistantState("ai-conversation", []);
+    let aiReminder = loadAssistantState("ai-reminder", { reminders: [] });
+    if (!Array.isArray(aiNotes)) aiNotes = [];
+    if (!Array.isArray(aiPlanTasks)) aiPlanTasks = [];
+    if (!Array.isArray(aiConversation)) aiConversation = [];
+    function normalizeAIReminders(saved) {
+        const reminders = Array.isArray(saved && saved.reminders)
+            ? saved.reminders
+            : saved && typeof saved === "object" && saved.enabled === true
+                ? [{ id: "legacy-daily-reminder", title: "Daily check-in", time: saved.time, enabled: true, lastSent: saved.lastSent }]
+                : [];
+        return reminders.slice(0, 20).filter((reminder) =>
+            reminder && typeof reminder === "object"
+            && typeof reminder.title === "string" && reminder.title.trim()
+            && typeof reminder.time === "string" && /^\d{2}:\d{2}$/.test(reminder.time))
+            .map((reminder) => ({
+                id: typeof reminder.id === "string" && reminder.id ? reminder.id : assistantId(),
+                title: reminder.title.trim().slice(0, 60),
+                time: reminder.time,
+                enabled: reminder.enabled !== false,
+                lastSent: typeof reminder.lastSent === "string" ? reminder.lastSent : ""
+            }));
+    }
+    const migrateAIReminders = !Array.isArray(aiReminder && aiReminder.reminders);
+    aiReminder = { reminders: normalizeAIReminders(aiReminder) };
+    if (migrateAIReminders) store.set("ai-reminder", JSON.stringify(aiReminder));
+    let pendingAiActions = [];
+    let aiRecognition = null;
 
     function esc(s) {
         return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -967,6 +1004,212 @@
 
     function saveGoals() { store.set("goals", JSON.stringify(goals)); }
     function saveFit() { store.set("fitness", JSON.stringify(fitness)); }
+
+    const TASK_POOL_SIZE = 70000;
+    const TASK_DURATIONS = [3, 5, 7, 10, 12, 15, 18, 20, 25, 30];
+    const TASK_TWISTS = [
+        "give the mission a ridiculous action-movie title",
+        "notice three tiny details you would usually miss",
+        "make one part deliberately silly",
+        "use your non-dominant hand if it feels comfortable",
+        "add a tiny victory pose at the end",
+        "do the smallest version that still feels fun",
+        "pretend you're a friendly alien exploring Earth",
+        "choose one color as the theme",
+        "leave one imperfect bit in on purpose",
+        "keep it private; sharing is never part of the challenge"
+    ];
+    const TASK_FINISHERS = [
+        "give the moment a five-word headline",
+        "write down the funniest detail",
+        "name one thing that surprised you",
+        "rate the mission out of ten, dramatically",
+        "tell yourself one sentence about how it felt",
+        "pick a soundtrack in your head for the ending",
+        "celebrate with a quiet 'quest complete'",
+        "save one tiny detail to remember later",
+        "choose a silly award for your effort",
+        "decide what your sequel challenge would be"
+    ];
+    const TASK_FAMILIES = [
+        {
+            name: "Offline side quest",
+            missions: [
+                ["Phone in exile", "leave your phone in another room and do one small thing just for you"],
+                ["One-drawer rescue", "tidy one tiny drawer without trying to reorganize the whole house"],
+                ["Window safari", "look outside and spot five details you have never paid attention to"],
+                ["Analog minute", "write a short note or doodle on paper instead of opening an app"],
+                ["Quiet snack", "enjoy a snack with your screen put away and notice its flavors"],
+                ["Desk reset", "clear just one small patch of your desk and make it feel new"],
+                ["Memory lane", "recall a funny old memory and write its best one-line summary"],
+                ["No-scroll break", "take a screen-free breather somewhere comfortable"],
+                ["Pocket declutter", "remove one piece of clutter from your bag or pocket"],
+                ["Tiny home upgrade", "make one small corner of your room more pleasant"]
+            ]
+        },
+        {
+            name: "Creative chaos",
+            missions: [
+                ["Movie-trailer object", "make a private 10-second video treating an ordinary object like a movie star"],
+                ["Wrong-hand masterpiece", "draw a silly portrait of an object with your non-dominant hand"],
+                ["Three-shot story", "make a tiny private photo story using three things nearby"],
+                ["New logo", "invent a ridiculous logo for a household object"],
+                ["Soundtrack scene", "pick a song that would score an ordinary moment like a blockbuster"],
+                ["Tiny comic", "draw a three-panel comic about something that happened today"],
+                ["Paper invention", "sketch an invention that solves a very unimportant problem"],
+                ["Object interview", "write three funny interview questions for an object near you"],
+                ["Secret album cover", "design an imaginary album cover using items around you"],
+                ["Mini voice-over", "record a private playful voice-over for a harmless everyday scene"]
+            ]
+        },
+        {
+            name: "Curiosity mode",
+            missions: [
+                ["Odd fact hunt", "look up one surprising fact about an animal you know little about"],
+                ["Word collector", "learn five words from a language you do not speak"],
+                ["Local legend", "search for a little-known place or story from your area"],
+                ["Why chain", "pick a harmless everyday object and ask 'why?' about it five times"],
+                ["Skill preview", "watch or read a short beginner guide to a skill you have never tried"],
+                ["Map wander", "explore a map of a place you have never visited and pick one landmark"],
+                ["Science snack", "find out why a familiar everyday science effect happens"],
+                ["Museum window", "browse one museum collection online and choose an unexpectedly cool item"],
+                ["Question jar", "write three questions you would love to ask an expert"],
+                ["New perspective", "find one reliable explanation of a topic you usually overlook"]
+            ]
+        },
+        {
+            name: "Gentle movement",
+            missions: [
+                ["Safe-route scout", "take a short walk on a familiar, safe route if it suits your body and surroundings"],
+                ["Stretch sampler", "try a few gentle stretches and stop if anything feels uncomfortable"],
+                ["Room explorer", "walk around your room and notice how many different textures you can spot"],
+                ["Balance check", "try a simple balance pose near something stable, or skip it if it feels unsafe"],
+                ["Shoulder reset", "roll your shoulders gently and loosen up after sitting"],
+                ["Step remix", "take a comfortable movement break at your own pace"],
+                ["Fresh-air minute", "step outside or sit by an open window and notice the air"],
+                ["Slow-motion walk", "walk slowly across a familiar room and notice each step"],
+                ["Stretch soundtrack", "put on a favorite song and move gently in whatever way feels good"],
+                ["Posture pause", "change position, relax your jaw, and take a few comfortable breaths"]
+            ]
+        },
+        {
+            name: "Kindness mission",
+            missions: [
+                ["Unexpected thanks", "send a sincere thank-you message to someone who helped you"],
+                ["Helpful minute", "do one small helpful thing for someone at home, if welcome"],
+                ["Kind review", "write a genuine kind note about a small business or creator you appreciate"],
+                ["Reconnect", "send a low-pressure hello to someone you have been meaning to check on"],
+                ["Compliment drop", "give someone a specific, respectful compliment"],
+                ["Future-you favor", "prepare one small thing that will make tomorrow easier"],
+                ["Quiet appreciation", "write down three things someone else did that you appreciate"],
+                ["Share a win", "celebrate someone else's good news without making it about you"],
+                ["Give space", "offer someone a little uninterrupted time or listening, if they want it"],
+                ["Kindness note", "leave a friendly note somewhere appropriate for someone to find"]
+            ]
+        },
+        {
+            name: "Brave-but-safe",
+            missions: [
+                ["Beginner move", "try the first beginner step of a safe skill you have been curious about"],
+                ["Ask the question", "ask a helpful, respectful question you have been holding back"],
+                ["Tiny first step", "work on a task you have delayed for just one small, manageable step"],
+                ["New playlist pick", "listen to a genre or artist you normally would not choose"],
+                ["Order differently", "if convenient, choose a familiar food or drink in a new variation"],
+                ["Speak up kindly", "share one harmless opinion you usually keep to yourself"],
+                ["Solo mini-date", "spend a few minutes enjoying an activity you usually wait to do with others"],
+                ["Try the tutorial", "follow the first safe step of a beginner tutorial you have saved"],
+                ["Celebrate progress", "tell someone you trust about one small thing you are proud of"],
+                ["Comfort-zone inch", "make one low-stakes change to your routine, and keep what feels right"]
+            ]
+        },
+        {
+            name: "Sound & senses",
+            missions: [
+                ["One-song focus", "listen to one favorite song without scrolling and notice three sounds"],
+                ["Sound detective", "sit quietly and identify five different sounds around you"],
+                ["Taste notes", "try a familiar drink slowly and notice its flavor like a food critic"],
+                ["Color quest", "find five things nearby in a color you choose"],
+                ["Texture hunt", "notice three different textures around you without needing to collect anything"],
+                ["Nature soundtrack", "listen for outdoor sounds from a safe spot or an open window"],
+                ["Memory track", "play a song that reminds you of a good moment and recall the story"],
+                ["Scent snapshot", "notice a familiar scent nearby and what memory or mood it brings"],
+                ["Quiet chorus", "hum or sing a little of a song if you feel comfortable"],
+                ["Eyes-up walk", "on a safe familiar path, look up and notice details above eye level"]
+            ]
+        }
+    ];
+
+    function dailyTaskIndex(date, reroll) {
+        const day = Math.floor(utcFromISO(date) / DAY_MS);
+        let userHash = 0;
+        for (const character of currentUser.uid) userHash = (Math.imul(userHash, 31) + character.charCodeAt(0)) >>> 0;
+        return (day * 9973 + userHash + reroll * 9973) % TASK_POOL_SIZE;
+    }
+
+    function mergeDailyTaskState(localState, remoteState) {
+        if (!localState) return remoteState || null;
+        if (!remoteState) return localState;
+        if (localState.date !== remoteState.date) return localState.date > remoteState.date ? localState : remoteState;
+        if (Number(localState.reroll) !== Number(remoteState.reroll)) {
+            return Number(localState.reroll) > Number(remoteState.reroll) ? localState : remoteState;
+        }
+        return {
+            date: localState.date,
+            reroll: Math.max(Number(localState.reroll) || 0, Number(remoteState.reroll) || 0),
+            completed: Boolean(localState.completed || remoteState.completed)
+        };
+    }
+
+    function currentDailyTask() {
+        const date = isoFromUTC(todayUTC());
+        if (!dailyTaskState || dailyTaskState.date !== date) {
+            dailyTaskState = { date, reroll: 0, completed: false };
+            store.set("daily-task", JSON.stringify(dailyTaskState));
+        }
+        dailyTaskState.reroll = Math.max(0, Math.floor(Number(dailyTaskState.reroll) || 0));
+        dailyTaskState.completed = Boolean(dailyTaskState.completed);
+        const index = dailyTaskIndex(date, dailyTaskState.reroll);
+        const familyIndex = Math.floor(index / 10000);
+        const combination = index % 10000;
+        const missionIndex = Math.floor(combination / 1000);
+        const durationIndex = Math.floor(combination / 100) % 10;
+        const twistIndex = Math.floor(combination / 10) % 10;
+        const finishIndex = combination % 10;
+        const family = TASK_FAMILIES[familyIndex];
+        const mission = family.missions[missionIndex];
+        return {
+            index,
+            date,
+            category: family.name,
+            title: mission[0],
+            instruction: mission[1],
+            minutes: TASK_DURATIONS[durationIndex],
+            twist: TASK_TWISTS[twistIndex],
+            finish: TASK_FINISHERS[finishIndex],
+            completed: dailyTaskState.completed
+        };
+    }
+
+    function renderDailyTask() {
+        const task = currentDailyTask();
+        const summary = document.getElementById("todayTaskCard");
+        const detail = document.getElementById("dailyTaskDetail");
+        if (!summary || !detail) return;
+        const dateLabel = new Date(utcFromISO(task.date)).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
+        const taskMarkup = (compact) => `<article class="task-challenge${task.completed ? " is-complete" : ""}">
+            <div class="task-challenge-meta"><span>${esc(task.category)}</span><span>${esc(dateLabel)}</span></div>
+            <h3>${esc(task.title)}</h3>
+            <p>Give it ${task.minutes} minutes (or less if that suits you): ${esc(task.instruction)}.</p>
+            <p class="task-twist"><strong>Bonus twist:</strong> ${esc(task.twist)}. <strong>Finish with:</strong> ${esc(task.finish)}.</p>
+            ${compact ? `<button type="button" class="secondary-button" data-task-open>Open today's Task →</button>` : `<div class="task-actions"><button type="button" class="primary-button" data-task-action="complete" aria-pressed="${task.completed}">${task.completed ? "✓ Completed today" : "Mark complete"}</button><button type="button" class="secondary-button" data-task-action="reroll">Get another task</button></div>`}
+        </article>`;
+        summary.innerHTML = `<div class="task-summary-heading"><span class="eyebrow">TODAY'S TASK</span><span aria-hidden="true">⚡</span></div>${taskMarkup(true)}`;
+        detail.innerHTML = taskMarkup(false);
+        clearTimeout(renderDailyTask.refreshTimer);
+        const now = new Date();
+        const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
+        renderDailyTask.refreshTimer = setTimeout(renderDailyTask, Math.max(1000, nextMidnight.getTime() - now.getTime()));
+    }
 
     function renderFocusTimer() {
         const clock = document.getElementById("focusClock");
@@ -1061,6 +1304,42 @@
         const from = first === null || first === undefined ? t0 : first;
         for (let x = from; x <= t0; x += DAY_MS) {
             if (checks[keyFor(x, habit)]) { run += 1; if (run > best) best = run; } else run = 0;
+        }
+        return { cur, best: Math.max(best, cur) };
+    }
+
+    function monthlyStreakFor(habit, y, m) {
+        const monthStart = Date.UTC(y, m, 1);
+        const monthEnd = Math.min(Date.UTC(y, m + 1, 0), todayUTC());
+        if (monthStart > monthEnd) return { cur: 0, best: 0 };
+
+        const monthStartISO = isoFromUTC(monthStart);
+        let cur = 0;
+        let day = monthEnd;
+        const isCurrentMonth = new Date(monthStart).getUTCFullYear() === new Date().getFullYear()
+            && new Date(monthStart).getUTCMonth() === new Date().getMonth();
+        if (!checks[keyFor(day, habit)]) {
+            if (!isCurrentMonth) day = monthStart - DAY_MS;
+            else day -= DAY_MS;
+        }
+        while (day >= monthStart && checks[keyFor(day, habit)]) {
+            cur += 1;
+            day -= DAY_MS;
+        }
+
+        let best = 0;
+        let run = 0;
+        for (let timestamp = monthStart; timestamp <= monthEnd; timestamp += DAY_MS) {
+            if (timestamp < utcFromISO(habitStarts[habit] || monthStartISO)) {
+                run = 0;
+                continue;
+            }
+            if (checks[keyFor(timestamp, habit)]) {
+                run += 1;
+                best = Math.max(best, run);
+            } else {
+                run = 0;
+            }
         }
         return { cur, best: Math.max(best, cur) };
     }
@@ -1356,7 +1635,7 @@
     }
 
     function matrixHTML(rowLabels, rows, colorFor) {
-        let html = `<table class="matrix"><thead><tr><th></th>${monthNames.map((n) => `<th>${n.slice(0, 1)}</th>`).join("")}</tr></thead><tbody>`;
+        let html = `<table class="matrix"><thead><tr><th></th>${monthNames.map((n) => `<th title="${n}">${n.slice(0, 3)}</th>`).join("")}</tr></thead><tbody>`;
         rows.forEach((cells, r) => {
             html += `<tr><th>${rowLabels[r]}</th>${cells.map((v, i) => `<td><span class="mx ${v === null ? "future" : levelClass(v / 100)}" title="${monthNames[i]}: ${v === null ? "no data" : `${v}%`}">${v === null ? "" : v}</span></td>`).join("")}</tr>`;
         });
@@ -1479,11 +1758,13 @@
             totalsByDow[dw] += dailyTotals[i];
             countsByDow[dw] += 1;
         }
-        const order = [1, 2, 3, 4, 5, 6, 0];
+        const todayDow = new Date().getDay();
+        const order = Array.from({ length: 7 }, (_, offset) => (todayDow + offset) % 7);
         document.getElementById("weekdayBars").innerHTML = order.map((dw) => {
             const p = n && countsByDow[dw] ? Math.round((totalsByDow[dw] / (countsByDow[dw] * n)) * 100) : 0;
             const zone = getGaugeZone(p);
-            return `<div class="wd-row"><span>${DOW[dw]}</span><div class="wd-track"><b class="zone-bg-${zone.key}" style="width:${p}%"></b></div><em>${countsByDow[dw] ? `${p}%` : "–"}</em></div>`;
+            const isToday = dw === todayDow;
+            return `<div class="wd-row${isToday ? " is-today" : ""}"${isToday ? ` aria-label="Today is ${DOW[dw]}; weekdays rotate to keep today first"` : ""}><span class="wd-day">${DOW[dw]}${isToday ? "<small>Today</small>" : ""}</span><div class="wd-track"><b class="zone-bg-${zone.key}" style="width:${p}%"></b></div><em>${countsByDow[dw] ? `${p}%` : "–"}</em></div>`;
         }).join("");
     }
 
@@ -1528,15 +1809,16 @@
         document.getElementById("lifeLegend").innerHTML = axes.every((a) => a[0] === "Habits" || a[1] === 0)
             ? `<p class="empty-note">Log steps, water, sleep and mood in Fitness Today to fill the other corners.</p>` : "";
 
-        // streaks
+        // Streaks in this month's calendar range only.
         const list = document.getElementById("streakList");
         if (!habits.length) { list.innerHTML = `<p class="empty-note">No habits yet.</p>`; return; }
-        const maxBest = Math.max(...habits.map((h) => ctx.streaks[h].best), 7);
-        list.innerHTML = habits.map((h) => {
-            const s = ctx.streaks[h];
+        const monthlyStreaks = habits.map((habit) => monthlyStreakFor(habit, y, m));
+        const maxBest = Math.max(...monthlyStreaks.map((streak) => streak.best), 7);
+        list.innerHTML = habits.map((h, index) => {
+            const s = monthlyStreaks[index];
             return `<div class="streak-row"><div class="streak-top"><span><i style="background:${habitColor(h)}"></i>${esc(h)}</span><b>${s.cur > 0 ? "🔥 " : ""}${s.cur} day${s.cur === 1 ? "" : "s"}</b></div>
-                <div class="streak-track" title="Current ${s.cur}, best ${s.best}"><b style="width:${(s.cur / maxBest) * 100}%;background:${habitColor(h)}"></b><u style="left:${(s.best / maxBest) * 100}%"></u></div>
-                <small>Best: ${s.best} day${s.best === 1 ? "" : "s"}</small></div>`;
+                <div class="streak-track" title="Current this month ${s.cur}, best this month ${s.best}"><b style="width:${(s.cur / maxBest) * 100}%;background:${habitColor(h)}"></b><u style="left:${(s.best / maxBest) * 100}%"></u></div>
+                <small>Best this month: ${s.best} day${s.best === 1 ? "" : "s"}</small></div>`;
         }).join("");
     }
 
@@ -1570,6 +1852,7 @@
             { icon: "🏋️", name: "25 workouts", desc: "Complete the Workout habit 25 times", cur: workoutCount, goal: 25 },
             { icon: "🥇", name: "100 workouts", desc: "Complete the Workout habit 100 times", cur: workoutCount, goal: 100 },
             { icon: "🚀", name: "250 workouts", desc: "Complete the Workout habit 250 times", cur: workoutCount, goal: 250 },
+            { icon: "🏆", name: "500 workouts", desc: "Complete the Workout habit 500 times", cur: workoutCount, goal: 500 },
             { icon: "👟", name: "10k steps", desc: "A day with 10,000 steps", cur: best10k, goal: 10000 },
             { icon: "😴", name: "Full rest", desc: "Sleep 8 hours or more", cur: bestSleep, goal: 8 },
             { icon: "💧", name: "Hydrated", desc: "Drink 2.5 L in a day", cur: bestWater, goal: 2500 }
@@ -1583,6 +1866,63 @@
     }
 
     /* ---------- habits page ---------- */
+
+    function renameHabitData(oldName, newName) {
+        Object.keys(checks).forEach((key) => {
+            const match = key.match(/^(\d{4}-\d{1,2}-\d{1,2})-(.*)$/);
+            if (!match || match[2] !== oldName) return;
+            const renamedKey = `${match[1]}-${newName}`;
+            checks[renamedKey] = Boolean(checks[renamedKey] || checks[key]);
+            delete checks[key];
+        });
+        habitStarts[newName] = habitStarts[oldName];
+        delete habitStarts[oldName];
+        goals.forEach((goal) => {
+            if (goal.habit === oldName) goal.habit = newName;
+        });
+        habits[habits.indexOf(oldName)] = newName;
+    }
+
+    function renameHabit(oldName, value) {
+        const newName = value.trim();
+        if (!newName) {
+            toast("A habit name cannot be empty.");
+            return false;
+        }
+        if (newName === oldName) return true;
+        if (habits.includes(newName)) {
+            toast("A habit with that name already exists.");
+            return false;
+        }
+        renameHabitData(oldName, newName);
+        saveGoals();
+        saveState();
+        renderCalendar();
+        return true;
+    }
+
+    function moveHabit(from, to, restoreFocus) {
+        if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from >= habits.length || to >= habits.length || from === to) return;
+        const moved = habits.splice(from, 1)[0];
+        habits.splice(to, 0, moved);
+        saveState();
+        renderCalendar();
+        if (restoreFocus) {
+            const card = habitManageList.querySelector(`[data-habit-index="${to}"]`);
+            if (card) {
+                card.classList.add("is-reorder-selected");
+                card.focus();
+            }
+        }
+    }
+
+    function commitHabitEdit(input, keepInvalid) {
+        if (!input.isConnected) return;
+        const card = input.closest(".habit-card");
+        const index = Number(card.dataset.habitIndex);
+        const saved = renameHabit(habits[index], input.value);
+        if ((saved && input.isConnected) || (!saved && !keepInvalid)) renderManageList();
+    }
 
     function renderManageList() {
         const { y, m } = selYM();
@@ -1606,8 +1946,8 @@
                 const e = elapsedDays(y, mm);
                 months.push(e ? Math.round((habitTicksInMonth(h, y, mm) / daysIn(y, mm)) * 100) : 0);
             }
-            return `<article class="habit-card">
-                <header><span class="hc-name"><i style="background:${habitColor(h)}"></i>${esc(h)}</span><button type="button" class="delete-btn" data-remove="${idx}" aria-label="Remove ${esc(h)}">Remove</button></header>
+            return `<article class="habit-card" data-habit-index="${idx}" tabindex="0" aria-label="${esc(h)}. Double-click the card to reorder with arrow keys; hold and drag to move.">
+                <header><span class="hc-name"><i style="background:${habitColor(h)}"></i><span class="hc-label" data-edit-habit="${idx}" title="Double-click to edit">${esc(h)}</span></span><button type="button" class="delete-btn" data-remove="${idx}" aria-label="Remove ${esc(h)}">Remove</button></header>
                 <div class="hc-main">
                     ${ringSVG(p, { size: 72, stroke: 7, color: habitColor(h) })}
                     <ul class="hc-stats">
@@ -1854,7 +2194,7 @@
         if (!HEALTH_ON) return null;
         try {
             const t = JSON.parse(sessionStorage.getItem("lifetrack-gtoken") || "null");
-            if (t && t.token && t.exp > Date.now() && t.scopes === HEALTH_SCOPES.join(" ")) return t.token;
+            if (t && t.token && t.exp > Date.now() && t.scopes === HEALTH_SCOPES) return t.token;
         } catch (e) { /* ignore */ }
         return null;
     }
@@ -1872,7 +2212,7 @@
         if (!driveToken()) {
             const status = document.getElementById("fitStatus");
             if (status && currentUser.provider === "google") {
-                status.textContent = "Google sync needs reconnecting. Use Reconnect Google in your profile menu.";
+                status.textContent = "Google sign-in expired. Sign in again from the login page to sync new changes.";
                 status.className = "fit-status warn";
             }
             return;
@@ -1892,19 +2232,20 @@
             body: bodyProfile,
             goals,
             fitness,
-            readingPlan
+            readingPlan,
+            dailyTask: dailyTaskState
         };
     }
 
     async function driveRequest(url, options) {
         const token = driveToken();
-        if (!token) throw new Error("Google sync needs reconnecting. Use Reconnect Google in your profile menu.");
+        if (!token) throw new Error("Google sign-in expired. Sign in with Google again to sync your data.");
         const response = await fetch(url, Object.assign({}, options, {
             headers: Object.assign({ Authorization: `Bearer ${token}` }, options && options.headers || {})
         }));
         if (response.status === 401) {
             sessionStorage.removeItem("lifetrack-drive-token");
-            throw new Error("Google sync needs reconnecting. Use Reconnect Google in your profile menu.");
+            throw new Error("Google sign-in expired. Sign in with Google again to sync your data.");
         }
         if (!response.ok) throw new Error(`Google Drive sync failed (HTTP ${response.status}).`);
         return response;
@@ -1937,6 +2278,7 @@
                 goals = Array.isArray(remote.goals) ? remote.goals : goals;
                 fitness = remote.fitness && typeof remote.fitness === "object" ? remote.fitness : fitness;
                 readingPlan = remote.readingPlan && typeof remote.readingPlan === "object" ? remote.readingPlan : readingPlan;
+                dailyTaskState = remote.dailyTask && typeof remote.dailyTask === "object" ? remote.dailyTask : dailyTaskState;
                 store.set("habits", JSON.stringify(habits));
                 store.set("checks", JSON.stringify(checks));
                 store.set("habit-start", JSON.stringify(habitStarts));
@@ -1944,6 +2286,7 @@
                 store.set("goals", JSON.stringify(goals));
                 store.set("fitness", JSON.stringify(fitness));
                 store.set("reading-plan", JSON.stringify(readingPlan));
+                if (dailyTaskState) store.set("daily-task", JSON.stringify(dailyTaskState));
                 localStorage.setItem(NS + "cloud-updated-at", String(Number(remote.updatedAt)));
                 localStorage.setItem(NS + "cloud-synced-at", String(Number(remote.updatedAt)));
                 cloudApplying = false;
@@ -1967,7 +2310,8 @@
                         body: bodyProfile || remote.body || null,
                         goals: Array.from(mergedGoals.values()),
                         fitness: mergedFitness,
-                        readingPlan: (Number(readingPlan.currentPage) || 0) > (Number((remote.readingPlan || {}).currentPage) || 0) ? readingPlan : (remote.readingPlan || readingPlan)
+                        readingPlan: (Number(readingPlan.currentPage) || 0) > (Number((remote.readingPlan || {}).currentPage) || 0) ? readingPlan : (remote.readingPlan || readingPlan),
+                        dailyTask: mergeDailyTaskState(dailyTaskState, remote.dailyTask)
                     });
                     habits = snapshot.habits;
                     checks = snapshot.checks;
@@ -1976,6 +2320,7 @@
                     goals = snapshot.goals;
                     fitness = snapshot.fitness;
                     readingPlan = snapshot.readingPlan;
+                    dailyTaskState = snapshot.dailyTask;
                     cloudApplying = true;
                     store.set("habits", JSON.stringify(habits));
                     store.set("checks", JSON.stringify(checks));
@@ -1984,6 +2329,7 @@
                     store.set("goals", JSON.stringify(goals));
                     store.set("fitness", JSON.stringify(fitness));
                     store.set("reading-plan", JSON.stringify(readingPlan));
+                    if (dailyTaskState) store.set("daily-task", JSON.stringify(dailyTaskState));
                     cloudApplying = false;
                     ensureYearOptions();
                     renderCalendar();
@@ -2036,34 +2382,33 @@
         const f = fitness[iso] || {};
         const tg = dailyTargets(ctx.life);
         const linked = Boolean(googleToken());
-        const providerName = FIT_ON ? "Google Fit" : "Google Health";
-        const providerSetupAction = FIT_ON ? "" : `<a class="secondary-button" href="https://fitbit.google.com/auth/signup" target="_blank" rel="noopener noreferrer">Set up Google Health</a>`;
 
         acts.innerHTML = !HEALTH_ON ? ""
-            : linked && healthSyncReady
-            ? `<span class="chip good">● Live from Google</span><button type="button" class="secondary-button" id="gSync">Sync now</button>`
             : linked
-            ? `<span class="chip">Google sign-in active · ${providerName} sync needs attention</span><button type="button" class="secondary-button" id="gSync">Retry sync</button>${providerSetupAction}`
-            : `<span class="chip">${providerName} data not connected</span><button type="button" class="secondary-button" id="gReconnect">Reconnect Google</button>${providerSetupAction}`;
+            ? `<span class="chip good">● Live from Google</span><button type="button" class="secondary-button" id="gSync">Sync now</button>`
+            : `<span class="chip">Sign in with Google for health data</span>`;
 
         const src = (k) => (f[`src_${k}`] === "google" ? `<small class="src">from Google</small>` : "");
-        const tile = (key, label, value, goal, color, text, control, showSource = true) => {
+        const lastSevenDayAverage = (field, divisor, formatter) => {
+            const values = [];
+            for (let offset = 6; offset >= 0; offset -= 1) {
+                const day = fitness[isoFromUTC(todayUTC() - offset * DAY_MS)] || {};
+                if (typeof day[field] === "number" && Number.isFinite(day[field]) && day[field] >= 0) {
+                    values.push(day[field] / divisor);
+                }
+            }
+            const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+            const loggedDays = values.length;
+            const formatted = average === null ? "—" : formatter(average);
+            const note = loggedDays ? `${loggedDays} of the last 7 days have readings` : "No readings in the last 7 days";
+            return `<small class="fit-average" title="${note}"><span>7-day avg</span><strong>${formatted}</strong>${loggedDays ? `<span>${loggedDays}/7 days</span>` : ""}</small>`;
+        };
+        const tile = (key, label, value, goal, color, text, control, average = "") => {
             const p = goal ? clamp((value / goal) * 100, 0, 100) : 0;
-            return `<div class="fit-tile">${ringSVG(p, { size: 84, stroke: 8, color })}<strong>${label}</strong><span class="fit-val">${text}</span>${control}${showSource ? src(key) : ""}</div>`;
+            return `<div class="fit-tile">${ringSVG(p, { size: 84, stroke: 8, color })}<strong>${label}</strong><span class="fit-val">${text}</span>${average}${control}${src(key)}</div>`;
         };
         const moods = ["😞", "🙁", "😐", "🙂", "😄"];
         const steps = Number(f.steps) || 0;
-        const sleepFromGoogle = f.src_sleep === "google";
-        const sleepSource = providerName;
-        const sleepGoogleAction = linked
-            ? `<button type="button" class="fit-source-action" data-sleep-action="sync">Sync ${sleepSource}</button>`
-            : `<button type="button" class="fit-source-action" data-sleep-action="reconnect">Connect ${sleepSource}</button>`;
-        const sleepInput = `<input class="fit-input" type="number" min="0" max="24" step="0.5" inputmode="decimal" data-field="sleep" value="${f.sleep || ""}" placeholder="Hours slept" aria-label="Hours slept">`;
-        const sleepControl = sleepFromGoogle
-            ? manualSleepEditing
-                ? `${sleepInput}<small class="src">${sleepSource} reading · editing replaces it</small><button type="button" class="fit-source-action" data-sleep-action="cancel">Keep Google value</button>`
-                : `<small class="src">Synced from ${sleepSource}</small><button type="button" class="fit-source-action" data-sleep-action="manual">Enter manually</button>`
-            : `${sleepInput}${FIT_ON && HEALTH_ON ? `<small class="src">Waiting for ${sleepSource} sleep data</small>${sleepGoogleAction}` : ""}`;
         const hasProfile = Boolean(bodyProfile && bodyProfile.weight > 0 && bodyProfile.height > 0);
         const strideMeters = hasProfile ? (bodyProfile.height / 100) * 0.415 : 0.72;
         const distanceKm = Math.round((steps * strideMeters) / 10) / 100;
@@ -2073,10 +2418,14 @@
             `<div class="vital-tile">${ringSVG(progress, { size: 76, stroke: 7, color, text: value == null ? "—" : String(value), ariaLabel })}<strong>${label}</strong><span class="fit-val">${unit}</span>${note ? `<small class="src">${note}</small>` : ""}</div>`;
         box.innerHTML = `<div class="fit-grid">
             ${tile("steps", "Steps", f.steps || 0, tg.steps, "var(--primary)", `${fmtNum(f.steps || 0)} / ${fmtNum(tg.steps)}`,
-                `<input class="fit-input" type="number" min="0" max="100000" step="100" inputmode="numeric" data-field="steps" value="${f.steps || ""}" placeholder="Set steps" aria-label="Steps today">`)}
+                `<input class="fit-input" type="number" min="0" max="100000" step="100" inputmode="numeric" data-field="steps" value="${f.steps || ""}" placeholder="Set steps" aria-label="Steps today">`,
+                lastSevenDayAverage("steps", 1, fmtNum))}
             ${tile("water", "Water", f.water || 0, tg.water, "var(--accent)", `${((f.water || 0) / 1000).toFixed(2)} / ${(tg.water / 1000).toFixed(1)} L`,
-                `<div class="fit-btns"><button type="button" data-water="-250" aria-label="Remove 250 ml">−</button><button type="button" data-water="250" aria-label="Add 250 ml">+250 ml</button></div>`)}
-            ${tile("sleep", "Sleep", f.sleep || 0, tg.sleep, "#a78bfa", `${(f.sleep || 0).toFixed(1)} / ${tg.sleep} h`, sleepControl, false)}
+                `<div class="fit-btns"><button type="button" data-water="-250" aria-label="Remove 250 ml">−</button><button type="button" data-water="250" aria-label="Add 250 ml">+250 ml</button></div>`,
+                lastSevenDayAverage("water", 1000, (value) => `${value.toFixed(1)} L`))}
+            ${tile("sleep", "Sleep", f.sleep || 0, tg.sleep, "#a78bfa", `${(f.sleep || 0).toFixed(1)} / ${tg.sleep} h`,
+                `<input class="fit-input" type="number" min="0" max="24" step="0.5" inputmode="decimal" data-field="sleep" value="${f.sleep || ""}" placeholder="Hours slept" aria-label="Hours slept">`,
+                lastSevenDayAverage("sleep", 1, (value) => `${value.toFixed(1)} h`))}
             ${tile("active", "Focus", f.active || 0, tg.active, "var(--zone-orange)", `${f.active || 0} / ${tg.active} min`,
                 `<input class="fit-input" type="number" min="0" max="600" step="5" inputmode="numeric" data-field="active" value="${f.active || ""}" placeholder="Minutes" aria-label="Focus minutes">`)}
         </div>
@@ -2085,7 +2434,7 @@
             ${metricTile("Distance", distanceKm.toFixed(2), "km estimated", tg.steps ? (steps / tg.steps) * 100 : 0, "var(--primary)", `${distanceKm.toFixed(2)} kilometers estimated from ${steps} steps`, hasProfile ? "steps + plan height" : "steps · average stride")}
         </div>
         <div class="mood-row"><span>How do you feel today?</span><div>${moods.map((e, i) => `<button type="button" class="mood-btn${f.mood === i + 1 ? " on" : ""}" data-mood="${i + 1}" aria-label="Mood ${i + 1} of 5" aria-pressed="${f.mood === i + 1}">${e}</button>`).join("")}</div></div>
-        <p id="fitStatus" class="fit-status ${fitStatus.kind}">${esc(fitStatus.text || (linked ? (healthSyncReady ? "Connected. Google readings refresh every minute when available." : "Google sign-in is active; checking whether this account can share health readings.") : (HEALTH_ON ? "Reconnect Google and allow the health permissions to import readings." : "Log your steps, water, sleep, focus and health readings by hand.")))}</p>`;
+        <p id="fitStatus" class="fit-status ${fitStatus.kind}">${esc(fitStatus.text || (linked ? "Connected. Google readings refresh every minute when available." : (HEALTH_ON ? "Google Health access is requested when you sign in with Google." : "Log your steps, water, sleep, focus and health readings by hand.")))}</p>`;
         animateRings(box);
     }
 
@@ -2115,14 +2464,12 @@
         return res.json();
     }
 
-    /* Google Fit REST API: reads the user's Google Fit data when legacy Fit mode is enabled. */
+    /* Google Fit REST API: fallback that reads the phone's Google Fit data (works only while Google still runs the Fit API). */
     async function syncFit(notes, wantSteps, wantSleep) {
         const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
         const startMs = midnight.getTime() - 13 * DAY_MS;
         const endMs = midnight.getTime() + DAY_MS;
         const isoLocal = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
-        let stepsOk = !wantSteps;
-        let sleepOk = !wantSleep;
 
         if (wantSteps) {
             try {
@@ -2143,11 +2490,10 @@
                         f.steps = total; f.src_steps = "google";
                     }
                 });
-                stepsOk = true;
             } catch (e) {
                 if (e.message === "expired") throw e;
                 console.error("Google Fit steps failed", e);
-                notes.push(`Steps: ${e.status === 403 ? `Google Fit denied access (403): ${e.message.replace(/^HTTP 403:\\s*/i, "")}` : `Google Fit request failed (${e.message})`}`);
+                notes.push((/insufficient/i.test(e.message) ? "Fit steps: permission missing, press Disconnect then Connect and tick ALL boxes" : `Fit steps failed (${e.message})`));
             }
         }
 
@@ -2164,28 +2510,13 @@
                     const f = fitness[iso] || (fitness[iso] = {});
                     f.sleep = Math.min(24, Math.round((nights[iso] / 60) * 10) / 10); f.src_sleep = "google";
                 });
-                sleepOk = true;
             } catch (e) {
                 if (e.message === "expired") throw e;
                 console.error("Google Fit sleep failed", e);
-                notes.push(`Sleep: ${e.status === 403 ? `Google Fit denied access (403): ${e.message.replace(/^HTTP 403:\\s*/i, "")}` : `Google Fit request failed (${e.message})`}`);
+                notes.push((/insufficient/i.test(e.message) ? "Fit sleep: permission missing, press Disconnect then Connect and tick ALL boxes" : `Fit sleep failed (${e.message})`));
             }
         }
-        return { stepsOk, sleepOk };
-    }
 
-    function healthErrorHint(error) {
-        if (/account[_ ]not[_ ]linked/i.test(error.message)) {
-            return "This Google account is not linked to Google Health yet. Open fitbit.google.com/auth/signup and set up Google Health with this same account, then retry.";
-        }
-        if (error.status === 403 && /gaia.?mint|uber.?mint/i.test(error.message)) {
-            return "Google Health rejected this account link. Sign out of the Google Health app, sign back in with this Google account, and migrate any old Fitbit account if prompted. See support.google.com/fitbit/answer/14237024.";
-        }
-        if (error.status === 403) {
-            const detail = error.message.match(/^HTTP 403:\s*(.*)$/i);
-            return `Google Health denied access (403)${detail && detail[1] ? `: ${detail[1].slice(0, 180)}` : ""}. Check that the Health API and requested read-only scopes are enabled in Google Cloud, and that this Google account is linked to Google Health.`;
-        }
-        return `Google health request failed: ${error.message}`;
     }
 
     async function syncGoogle() {
@@ -2198,8 +2529,6 @@
             const t0 = todayUTC();
             const civil = (ms) => { const d = new Date(ms); return { date: { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() } }; };
             const SOURCES = "users/me/dataSourceFamilies/all-sources";
-
-            if (!FIT_ON) await gfetch("https://health.googleapis.com/v4/users/me/identity");
 
             if (!FIT_ON) try {
                 const steps = await gfetch("https://health.googleapis.com/v4/users/me/dataTypes/steps/dataPoints:dailyRollUp", {
@@ -2218,7 +2547,7 @@
             } catch (e) {
                 if (e.message === "expired") throw e;
                 console.error("Google steps sync failed", e);
-                notes.push(`Steps: ${healthErrorHint(e)}`);
+                notes.push(`Health steps failed (${e.message})`);
             }
 
             if (!FIT_ON) try {
@@ -2250,28 +2579,22 @@
             } catch (e) {
                 if (e.message === "expired") throw e;
                 console.error("Google sleep sync failed", e);
-                notes.push(`Sleep: ${healthErrorHint(e)}`);
+                notes.push(`Health sleep failed (${e.message})`);
             }
 
-            if (FIT_ON && (!stepsOk || !sleepOk)) {
-                const fitStatus = await syncFit(notes, !stepsOk, !sleepOk);
-                stepsOk = fitStatus.stepsOk;
-                sleepOk = fitStatus.sleepOk;
-            }
+            if (FIT_ON && (!stepsOk || !sleepOk)) await syncFit(notes, !stepsOk, !sleepOk);
 
-            if (fitness[isoFromUTC(t0)] && fitness[isoFromUTC(t0)].src_sleep === "google") manualSleepEditing = false;
             saveFit();
-            healthSyncReady = stepsOk && sleepOk;
             const now = new Date();
-            const sourceName = FIT_ON ? "Google Fit" : "Google Health";
-            setFitStatus(healthSyncReady
-                ? `[v5 ${FIT_ON ? "fit" : "health"}] Synced at ${pad2(now.getHours())}:${pad2(now.getMinutes())}${notes.length ? `. Skipped: ${notes.join(", ")}` : ""}`
-                : `${sourceName} sync failed. ${notes.join(" ")}`, healthSyncReady ? (notes.length ? "warn" : "good") : "bad");
+            setFitStatus(`[v5 ${FIT_ON ? "fit" : "health"}] Synced at ${pad2(now.getHours())}:${pad2(now.getMinutes())}${notes.length ? `. Skipped: ${notes.join(", ")}` : ""}`, notes.length ? "warn" : "good");
         } catch (e) {
-            healthSyncReady = false;
+            const accountNotLinked = /account[_ ]not[_ ]linked/i.test(e.message);
+            if (accountNotLinked) sessionStorage.removeItem("lifetrack-gtoken");
             setFitStatus(e.message === "expired"
-                ? "Google session ended. Press Reconnect Google to link again."
-                : healthErrorHint(e), "bad");
+                ? "Google session ended. Press Connect Google Health to link again."
+                : accountNotLinked
+                    ? "Open Google Health on this same Google account, finish linking it, then connect again."
+                    : `Google sync failed: ${e.message}`, "bad");
         } finally {
             syncing = false;
             renderStats();
@@ -2288,68 +2611,6 @@
             s.onerror = () => reject(new Error("Could not load Google sign-in. Check your internet connection."));
             document.head.appendChild(s);
         });
-    }
-
-    async function reconnectGoogle() {
-        if (currentUser.provider !== "google") {
-            window.location.href = "index.html";
-            return;
-        }
-        if (!GOOGLE_READY || location.protocol === "file:") {
-            toast("Google reconnect is only available on the LifeTrack website.");
-            return;
-        }
-        try {
-            await loadGIS();
-            const client = google.accounts.oauth2.initTokenClient({
-                client_id: GID,
-                scope: LOGIN_SCOPES.join(" "),
-                include_granted_scopes: false,
-                callback: async (response) => {
-                    if (response.error) {
-                        toast(`Google reconnect was cancelled or blocked (${response.error}).`);
-                        return;
-                    }
-                    try {
-                        const grantedScopes = new Set(String(response.scope || LOGIN_SCOPES.join(" ")).split(/\s+/));
-                        if (!grantedScopes.has(DRIVE_SCOPE)) {
-                            throw new Error("Allow Google Drive app-data access to sync LifeTrack.");
-                        }
-                        const userResponse = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-                            headers: { Authorization: `Bearer ${response.access_token}` }
-                        });
-                        if (!userResponse.ok) throw new Error(`Could not verify your Google account (HTTP ${userResponse.status}).`);
-                        const googleUser = await userResponse.json();
-                        if (`g_${googleUser.sub || googleUser.email}` !== currentUser.uid) {
-                            throw new Error("Choose the same Google account that is already linked to LifeTrack.");
-                        }
-
-                        const expiry = Date.now() + (Number(response.expires_in || 3600) - 60) * 1000;
-                        sessionStorage.setItem("lifetrack-drive-token", JSON.stringify({ token: response.access_token, exp: expiry }));
-                        if (HEALTH_SCOPES.length && HEALTH_SCOPES.every((scope) => grantedScopes.has(scope))) {
-                            sessionStorage.setItem("lifetrack-gtoken", JSON.stringify({
-                                token: response.access_token,
-                                exp: expiry,
-                                scopes: HEALTH_SCOPES.join(" ")
-                            }));
-                        } else {
-                            sessionStorage.removeItem("lifetrack-gtoken");
-                        }
-
-                        toast("Google reconnected. Syncing your data...");
-                        await syncCloud();
-                        if (googleToken()) await syncGoogle();
-                        renderStats();
-                    } catch (error) {
-                        toast(error.message);
-                    }
-                },
-                error_callback: () => toast("The Google window was closed or blocked. Allow pop-ups for this site and try again.")
-            });
-            client.requestAccessToken({ prompt: "" });
-        } catch (error) {
-            toast(error.message);
-        }
     }
 
     /* ---------- modal + menu ---------- */
@@ -2398,8 +2659,367 @@
         }
     }
 
+    function saveAssistantState(key, value) {
+        store.set(key, JSON.stringify(value));
+    }
+
+    function assistantId() {
+        return window.crypto && typeof window.crypto.randomUUID === "function"
+            ? window.crypto.randomUUID()
+            : `ai-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
+    function renderAINotes() {
+        const list = document.getElementById("aiNotesList");
+        list.innerHTML = "";
+        if (!aiNotes.length) {
+            const empty = document.createElement("p");
+            empty.className = "empty-note";
+            empty.textContent = "No notes yet. Save a thought here or ask AI to draft one.";
+            list.appendChild(empty);
+            return;
+        }
+        aiNotes.slice().sort((a, b) => Number(b.updatedAt) - Number(a.updatedAt)).forEach((note) => {
+            const card = document.createElement("article");
+            card.className = "ai-note";
+            const text = document.createElement("p");
+            text.textContent = note.text;
+            const date = document.createElement("small");
+            date.textContent = new Date(note.updatedAt).toLocaleString();
+            const actions = document.createElement("div");
+            actions.className = "ai-note-actions";
+            actions.innerHTML = `<button type="button" data-note-edit="${esc(note.id)}">Edit</button><button type="button" data-note-delete="${esc(note.id)}">Delete</button>`;
+            card.append(text, date, actions);
+            list.appendChild(card);
+        });
+    }
+
+    function saveAINote(text, id) {
+        const cleaned = String(text || "").trim();
+        if (!cleaned || cleaned.length > 1000) throw new Error("Notes must contain 1–1,000 characters.");
+        const existing = id ? aiNotes.find((note) => note.id === id) : null;
+        if (existing) {
+            existing.text = cleaned;
+            existing.updatedAt = Date.now();
+        } else {
+            aiNotes.unshift({ id: assistantId(), text: cleaned, createdAt: Date.now(), updatedAt: Date.now() });
+            aiNotes = aiNotes.slice(0, 200);
+        }
+        saveAssistantState("ai-notes", aiNotes);
+        renderAINotes();
+    }
+
+    function renderAIMessages() {
+        const container = document.getElementById("aiMessages");
+        container.innerHTML = "";
+        const messages = aiConversation.length ? aiConversation : [{
+            role: "assistant",
+            content: "Hi! I can help with habits, goals, notes, and extra tasks for your Daily Body & Mind Plan. Ask me to suggest or make changes; I will show you a review before saving."
+        }];
+        messages.slice(-40).forEach((message) => {
+            const bubble = document.createElement("div");
+            bubble.className = `ai-message ${message.role === "user" ? "user" : "assistant"}`;
+            bubble.textContent = message.content;
+            container.appendChild(bubble);
+        });
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function setAITab(tab) {
+        document.querySelectorAll("[data-ai-tab]").forEach((button) => {
+            const selected = button.dataset.aiTab === tab;
+            button.classList.toggle("active", selected);
+            button.setAttribute("aria-selected", String(selected));
+        });
+        document.querySelectorAll("[data-ai-view]").forEach((view) => {
+            view.hidden = view.dataset.aiView !== tab;
+        });
+        if (tab === "notes") renderAINotes();
+    }
+
+    function aiContext() {
+        const now = todayUTC();
+        let checkinsLastWeek = 0;
+        const dailyCheckins = [];
+        for (let i = 6; i >= 0; i -= 1) {
+            const date = now - i * DAY_MS;
+            let count = 0;
+            habits.forEach((habit) => { if (checks[keyFor(date, habit)]) count += 1; });
+            dailyCheckins.push(count);
+            checkinsLastWeek += count;
+        }
+        return {
+            habits: habits.slice(0, 25).map((habit) => habit.slice(0, 60)),
+            goals: goals.slice(0, 20).map(({ id, name, habit, target }) => ({ id, name: String(name).slice(0, 60), habit: String(habit).slice(0, 60), target })),
+            lastSevenDays: { dailyCheckins, total: checkinsLastWeek },
+            bodyMindPlan: {
+                hasBodyProfile: Boolean(bodyProfile),
+                profileGoal: bodyProfile && bodyProfile.goal || "not set",
+                activityLevel: bodyProfile && bodyProfile.activity || "not set",
+                customTasks: aiPlanTasks.slice(0, 10).map(({ id, title, details, doneDate }) => ({
+                    id, title: String(title).slice(0, 80), details: String(details || "").slice(0, 120), completedToday: doneDate === isoFromUTC(now)
+                }))
+            }
+        };
+    }
+
+    function validateAiActions(actions) {
+        if (!Array.isArray(actions) || actions.length > 5) throw new Error("The assistant suggested an invalid set of changes.");
+        const habitNames = new Set(habits);
+        const goalIds = new Set(goals.map((goal) => goal.id));
+        const planIds = new Set(aiPlanTasks.map((task) => task.id));
+        return actions.map((action) => {
+            if (!action || typeof action !== "object" || typeof action.type !== "string") throw new Error("The assistant suggested an unreadable change.");
+            const text = (key, max, required) => {
+                const value = typeof action[key] === "string" ? action[key].trim() : "";
+                if ((required && !value) || value.length > max) throw new Error("One suggested change has missing or too-long text.");
+                return value;
+            };
+            const target = Number(action.target);
+            switch (action.type) {
+                case "habit_add": {
+                    const name = text("name", 60, true);
+                    if (habitNames.has(name)) throw new Error(`Habit "${name}" already exists.`);
+                    habitNames.add(name);
+                    return { type: action.type, name };
+                }
+                case "habit_edit": {
+                    const oldName = text("oldName", 60, true);
+                    const name = text("name", 60, true);
+                    if (!habitNames.has(oldName) || (name !== oldName && habitNames.has(name))) throw new Error("A suggested habit edit conflicts with your current habits.");
+                    habitNames.delete(oldName);
+                    habitNames.add(name);
+                    return { type: action.type, oldName, name };
+                }
+                case "habit_remove": {
+                    const name = text("name", 60, true);
+                    if (!habitNames.has(name)) throw new Error(`Habit "${name}" no longer exists.`);
+                    habitNames.delete(name);
+                    return { type: action.type, name };
+                }
+                case "goal_add": {
+                    const name = text("name", 60, true);
+                    const habit = text("habit", 60, true);
+                    if (habit !== "*" && !habitNames.has(habit)) throw new Error(`Goal habit "${habit}" does not exist.`);
+                    if (!Number.isInteger(target) || target < 10 || target > 100 || target % 5 !== 0) throw new Error("Goal targets must be 10–100 in steps of 5.");
+                    return { type: action.type, name, habit, target };
+                }
+                case "goal_edit": {
+                    const id = text("id", 100, true);
+                    const name = text("name", 60, true);
+                    const habit = text("habit", 60, true);
+                    if (!goalIds.has(id) || (habit !== "*" && !habitNames.has(habit))) throw new Error("A suggested goal edit references a missing goal or habit.");
+                    if (!Number.isInteger(target) || target < 10 || target > 100 || target % 5 !== 0) throw new Error("Goal targets must be 10–100 in steps of 5.");
+                    return { type: action.type, id, name, habit, target };
+                }
+                case "goal_remove": {
+                    const id = text("id", 100, true);
+                    if (!goalIds.has(id)) throw new Error("A suggested goal no longer exists.");
+                    goalIds.delete(id);
+                    return { type: action.type, id };
+                }
+                case "profile_edit": {
+                    if (!bodyProfile) throw new Error("Set up your body profile first before asking AI to adjust plan preferences.");
+                    const next = { type: action.type };
+                    if (action.activity !== undefined) {
+                        if (!["sedentary", "light", "moderate", "active"].includes(action.activity)) throw new Error("The suggested activity level is not supported.");
+                        next.activity = action.activity;
+                    }
+                    if (action.goal !== undefined) {
+                        if (!["maintain", "loss", "gain"].includes(action.goal)) throw new Error("The suggested body goal is not supported.");
+                        next.goal = action.goal;
+                    }
+                    if (!next.activity && !next.goal) throw new Error("The suggested plan preference is empty.");
+                    return next;
+                }
+                case "plan_add": {
+                    const title = text("title", 80, true);
+                    const details = text("details", 240, false);
+                    if (planIds.size >= 30) throw new Error("The daily plan already has 30 custom tasks.");
+                    return { type: action.type, title, details };
+                }
+                case "plan_edit": {
+                    const id = text("id", 100, true);
+                    const title = text("title", 80, true);
+                    const details = text("details", 240, false);
+                    if (!planIds.has(id)) throw new Error("A suggested plan task no longer exists.");
+                    return { type: action.type, id, title, details };
+                }
+                case "plan_remove": {
+                    const id = text("id", 100, true);
+                    if (!planIds.has(id)) throw new Error("A suggested plan task no longer exists.");
+                    planIds.delete(id);
+                    return { type: action.type, id };
+                }
+                case "note_add":
+                    return { type: action.type, text: text("text", 1000, true) };
+                default:
+                    throw new Error("The assistant suggested an unsupported change.");
+            }
+        });
+    }
+
+    function aiActionLabel(action) {
+        switch (action.type) {
+            case "habit_add": return `Add habit: ${action.name}`;
+            case "habit_edit": return `Rename habit: ${action.oldName} → ${action.name}`;
+            case "habit_remove": return `Remove habit and its linked goals: ${action.name}`;
+            case "goal_add": return `Add goal: ${action.name} · ${action.habit === "*" ? "all habits" : action.habit} · ${action.target}%`;
+            case "goal_edit": return `Edit goal: ${action.name} · ${action.habit === "*" ? "all habits" : action.habit} · ${action.target}%`;
+            case "goal_remove": return `Remove goal: ${goals.find((goal) => goal.id === action.id).name}`;
+            case "profile_edit": return `Adjust Daily Body & Mind Plan preferences${action.activity ? ` · activity: ${action.activity}` : ""}${action.goal ? ` · body goal: ${action.goal}` : ""}`;
+            case "plan_add": return `Add daily plan task: ${action.title}`;
+            case "plan_edit": return `Edit daily plan task: ${aiPlanTasks.find((task) => task.id === action.id).title} → ${action.title}`;
+            case "plan_remove": return `Remove daily plan task: ${aiPlanTasks.find((task) => task.id === action.id).title}`;
+            case "note_add": return `Save note: ${action.text}`;
+            default: return "";
+        }
+    }
+
+    function showAIProposals(actions) {
+        const panel = document.getElementById("aiProposals");
+        pendingAiActions = actions;
+        panel.innerHTML = `<h4>Review before saving</h4><ul class="ai-proposal-list">${actions.map((action) => `<li>${esc(aiActionLabel(action))}</li>`).join("")}</ul><div class="ai-proposal-actions"><button type="button" data-ai-reject>Cancel</button><button type="button" class="ai-apply" data-ai-apply>Apply changes</button></div>`;
+        panel.hidden = false;
+    }
+
+    function applyAIProposals() {
+        if (!pendingAiActions.length) return;
+        try {
+            pendingAiActions = validateAiActions(pendingAiActions);
+        } catch (error) {
+            pendingAiActions = [];
+            document.getElementById("aiProposals").hidden = true;
+            toast(`These suggestions are no longer valid: ${error.message}`);
+            return;
+        }
+        pendingAiActions.forEach((action) => {
+            if (action.type === "habit_add") {
+                habits.push(action.name);
+                habitStarts[action.name] = isoFromUTC(todayUTC());
+            } else if (action.type === "habit_edit") {
+                renameHabitData(action.oldName, action.name);
+            } else if (action.type === "habit_remove") {
+                delete habitStarts[action.name];
+                habits = habits.filter((habit) => habit !== action.name);
+                goals = goals.filter((goal) => goal.habit !== action.name);
+            } else if (action.type === "goal_add") {
+                goals.push({ id: `g-${assistantId()}`, name: action.name, habit: action.habit, target: action.target });
+            } else if (action.type === "goal_edit") {
+                const goal = goals.find((item) => item.id === action.id);
+                goal.name = action.name;
+                goal.habit = action.habit;
+                goal.target = action.target;
+            } else if (action.type === "goal_remove") {
+                goals = goals.filter((goal) => goal.id !== action.id);
+            } else if (action.type === "profile_edit") {
+                if (action.activity) bodyProfile.activity = action.activity;
+                if (action.goal) bodyProfile.goal = action.goal;
+                store.set("body", JSON.stringify(bodyProfile));
+            } else if (action.type === "plan_add") {
+                aiPlanTasks.push({ id: assistantId(), title: action.title, details: action.details, doneDate: "" });
+            } else if (action.type === "plan_edit") {
+                const task = aiPlanTasks.find((item) => item.id === action.id);
+                task.title = action.title;
+                task.details = action.details;
+            } else if (action.type === "plan_remove") {
+                aiPlanTasks = aiPlanTasks.filter((task) => task.id !== action.id);
+            } else if (action.type === "note_add") {
+                saveAINote(action.text);
+            }
+        });
+        saveState();
+        saveGoals();
+        saveAssistantState("ai-plan", aiPlanTasks);
+        pendingAiActions = [];
+        document.getElementById("aiProposals").hidden = true;
+        renderCalendar();
+        toast("AI changes saved.");
+    }
+
+    async function sendAIMessage(message) {
+        const prompt = String(message || "").trim();
+        if (!prompt) return;
+        if (prompt.length > 1200) {
+            toast("Keep each message under 1,200 characters.");
+            return;
+        }
+        if (pendingAiActions.length) {
+            toast("Apply or cancel the pending changes before starting another request.");
+            return;
+        }
+        const base = String(CFG.GROQ_WORKER_URL || "").trim().replace(/\/+$/, "");
+        if (!base) {
+            toast("Connect the secure Groq Worker URL in config.js to enable AI.");
+            return;
+        }
+        let endpoint;
+        try {
+            endpoint = new URL(`${base}/api/assistant`);
+            if (endpoint.protocol !== "https:" && endpoint.hostname !== "localhost") throw new Error("Use an HTTPS Worker URL.");
+        } catch (error) {
+            toast(error.message || "The Groq Worker URL in config.js is invalid.");
+            return;
+        }
+
+        const promptInput = document.getElementById("aiPrompt");
+        const sendButton = document.getElementById("aiSend");
+        const voiceStatus = document.getElementById("aiVoiceStatus");
+        promptInput.value = "";
+        aiConversation.push({ role: "user", content: prompt });
+        aiConversation = aiConversation.slice(-40);
+        saveAssistantState("ai-conversation", aiConversation);
+        renderAIMessages();
+        sendButton.disabled = true;
+        sendButton.textContent = "…";
+        voiceStatus.textContent = "Thinking…";
+        try {
+            const response = await fetch(endpoint.toString(), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    messages: aiConversation.slice(-8).map((item) => ({ role: item.role, content: item.content.slice(-800) })),
+                    context: aiContext()
+                })
+            });
+            let data;
+            try { data = await response.json(); } catch (error) {
+                throw new Error(`The AI service returned an invalid response (HTTP ${response.status}).`);
+            }
+            if (!response.ok) throw new Error(data.error || `AI request failed (HTTP ${response.status}).`);
+            if (typeof data.reply !== "string" || !Array.isArray(data.actions)) throw new Error("The AI service response was incomplete.");
+            aiConversation.push({ role: "assistant", content: data.reply.slice(0, 4000) });
+            aiConversation = aiConversation.slice(-40);
+            saveAssistantState("ai-conversation", aiConversation);
+            renderAIMessages();
+            if (data.actions.length) {
+                try {
+                    showAIProposals(validateAiActions(data.actions));
+                } catch (error) {
+                    aiConversation.push({ role: "assistant", content: `I skipped a proposed change because it was invalid: ${error.message}` });
+                    aiConversation = aiConversation.slice(-40);
+                    saveAssistantState("ai-conversation", aiConversation);
+                    renderAIMessages();
+                }
+            }
+            voiceStatus.textContent = "";
+        } catch (error) {
+            const message = location.protocol === "file:"
+                ? "This dashboard is open as a local file, so the browser blocks its AI connection. Open the hosted HTTPS LifeTrack page to use the assistant."
+                : `I couldn't reach the AI service: ${error.message}`;
+            aiConversation.push({ role: "assistant", content: message });
+            aiConversation = aiConversation.slice(-40);
+            saveAssistantState("ai-conversation", aiConversation);
+            renderAIMessages();
+            voiceStatus.textContent = message;
+        } finally {
+            sendButton.disabled = false;
+            sendButton.textContent = "Send";
+        }
+    }
+
     function exportData() {
-        const data = { app: "LifeTrack", version: 2, exportedAt: new Date().toISOString(), user: { name: currentUser.name, email: currentUser.email || "" }, habits, checks, habitStarts, body: bodyProfile, goals, fitness, readingPlan };
+        const data = { app: "LifeTrack", version: 3, exportedAt: new Date().toISOString(), user: { name: currentUser.name, email: currentUser.email || "" }, habits, checks, habitStarts, body: bodyProfile, goals, fitness, readingPlan, dailyTask: dailyTaskState, aiNotes, aiPlanTasks };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
@@ -2417,7 +3037,7 @@
             let data;
             try { data = JSON.parse(reader.result); } catch (e) { toast("That file is not valid JSON."); return; }
             if (!data || data.app !== "LifeTrack" || !Array.isArray(data.habits) || typeof data.checks !== "object") { toast("That is not a LifeTrack backup."); return; }
-            confirmModal("Replace your data?", `This will replace your current habits, check-ins, goals and fitness log with the backup from ${data.exportedAt ? data.exportedAt.slice(0, 10) : "the file"}.`, "Replace data", () => {
+            confirmModal("Replace your data?", `This will replace your current habits, check-ins, goals, fitness log, AI notes and custom plan tasks with the backup from ${data.exportedAt ? data.exportedAt.slice(0, 10) : "the file"}.`, "Replace data", () => {
                 habits = data.habits.map(String);
                 checks = data.checks || {};
                 habitStarts = data.habitStarts || {};
@@ -2425,8 +3045,17 @@
                 goals = Array.isArray(data.goals) ? data.goals : goals;
                 fitness = data.fitness || {};
                 readingPlan = data.readingPlan || { bookIndex: 0, bookId: "atomic-habits", pageCount: 320, currentPage: 0, dailyTarget: 10, dailyStart: 1, dailyEnd: 10, dailyDate: "", completedBooks: [] };
+                dailyTaskState = data.dailyTask && typeof data.dailyTask === "object" ? data.dailyTask : null;
+                aiNotes = Array.isArray(data.aiNotes)
+                    ? data.aiNotes.filter((note) => note && typeof note.id === "string" && typeof note.text === "string" && note.text.trim()).slice(0, 200)
+                    : [];
+                aiPlanTasks = Array.isArray(data.aiPlanTasks)
+                    ? data.aiPlanTasks.filter((task) => task && typeof task.id === "string" && typeof task.title === "string" && task.title.trim()).slice(0, 30)
+                    : [];
                 saveState(); saveGoals(); saveFit();
                 saveReadingPlan();
+                saveAssistantState("ai-notes", aiNotes);
+                saveAssistantState("ai-plan", aiPlanTasks);
                 if (bodyProfile) store.set("body", JSON.stringify(bodyProfile)); else store.remove("body");
                 ensureYearOptions();
                 renderCalendar();
@@ -2458,12 +3087,20 @@
         menuOpener = opener;
         const linked = Boolean(googleToken());
         const isGoogle = currentUser.provider === "google";
+        const isDark = document.body.classList.contains("dark");
         const avatar = currentUser.picture ? `<img alt="" referrerpolicy="no-referrer" src="${esc(currentUser.picture)}">` : esc((Array.from(currentUser.name.trim())[0] || "U").toUpperCase());
         profileMenu.innerHTML = `<div class="pm-head"><span class="profile pm-avatar">${avatar}</span><div><strong>${esc(currentUser.name)}</strong><small>${esc(currentUser.email || (currentUser.name === "Guest" ? "Guest, data stays on this device" : "No email added"))}</small>${isGoogle ? `<span class="chip">Signed in with Google</span>` : ""}</div></div>
             <div class="pm-list" role="none">
+                <button type="button" role="menuitem" data-act="section" data-section="dashboard">📊 Dashboard</button>
+                <button type="button" role="menuitem" data-act="section" data-section="habits">✓ Habits</button>
+                <button type="button" role="menuitem" data-act="section" data-section="goals">🎯 Goals</button>
+                <button type="button" role="menuitem" data-act="section" data-section="analytics">📈 Analytics</button>
+                <button type="button" role="menuitem" data-act="section" data-section="tasks">⚡ Task</button>
+                <button type="button" role="menuitem" data-act="theme">${isDark ? "☀️ Light Mode" : "🌙 Dark Mode"}</button>
+                <hr>
                 <button type="button" role="menuitem" data-act="edit">✏️ Edit profile</button>
                 <button type="button" role="menuitem" data-act="body">⚖️ Body profile</button>
-                ${currentUser.provider === "google" ? `<span class="chip">Google Drive data sync</span><button type="button" role="menuitem" data-act="reauth">🔄 Reconnect Google sync</button>` : ""}
+                ${currentUser.provider === "google" ? `<span class="chip">Google Drive data sync</span><button type="button" role="menuitem" data-act="reauth">🔄 Sign in again for sync</button>` : ""}
                 <hr>
                 <button type="button" role="menuitem" data-act="export">⬇️ Download backup</button>
                 <button type="button" role="menuitem" data-act="import">⬆️ Restore backup</button>
@@ -2476,7 +3113,13 @@
         const w = profileMenu.offsetWidth;
         let left;
         let top;
-        if (opener === logoBtn) { left = r.right + 12; top = Math.max(8, r.top); } else { left = r.right - w; top = r.bottom + 8; }
+        if (opener === logoBtn) {
+            left = r.right + 12;
+            top = Math.max(8, r.top);
+        } else {
+            left = r.right - w;
+            top = r.bottom + 8;
+        }
         left = clamp(left, 8, window.innerWidth - w - 8);
         const maxTop = window.innerHeight - profileMenu.offsetHeight - 8;
         profileMenu.style.left = `${left}px`;
@@ -2495,6 +3138,11 @@
     document.addEventListener("click", (e) => { if (!profileMenu.hidden && !profileMenu.contains(e.target)) closeMenu(); });
     document.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
+            const aiPanel = document.getElementById("aiPanel");
+            if (!aiPanel.hidden) {
+                aiPanel.hidden = true;
+                document.getElementById("aiLauncher").setAttribute("aria-expanded", "false");
+            }
             if (!profileMenu.hidden) { closeMenu(); if (menuOpener) menuOpener.focus(); }
             closeModal();
         }
@@ -2505,19 +3153,27 @@
         if (!b) return;
         const act = b.dataset.act;
         closeMenu();
-        if (act === "edit") openProfileEditor();
+        if (act === "section") navigateToSection(b.dataset.section);
+        else if (act === "theme") setTheme(!document.body.classList.contains("dark"));
+        else if (act === "edit") openProfileEditor();
         else if (act === "body") {
-            document.querySelector('.nav-item[data-section="dashboard"]').click();
+            navigateToSection("dashboard");
             editingBody = true;
             renderDailyReminder(lastLife || computeLifetime());
             dailyReminder.scrollIntoView({ behavior: "smooth", block: "center" });
         } else if (act === "gsync") syncGoogle();
-        else if (act === "reauth") reconnectGoogle();
+        else if (act === "reauth") window.location.href = "index.html";
         else if (act === "export") exportData();
         else if (act === "import") document.getElementById("importFile").click();
         else if (act === "reset") {
-            confirmModal("Delete all your data?", "This removes your habits, check-ins, goals, reading progress, body profile and fitness log from this browser. Download a backup first if you might want it back.", "Delete everything", () => {
-                ["habits", "checks", "habit-start", "body", "goals", "fitness", "reading-plan"].forEach((k) => store.remove(k));
+            confirmModal("Delete all your data?", "This removes your habits, check-ins, goals, reading progress, body profile, fitness log, AI notes, reminders and custom plan tasks from this browser and removes its background reminder schedule. Download a backup first if you might want them back.", "Delete everything", async () => {
+                try {
+                    await syncAIReminderPush([]);
+                } catch (error) {
+                    toast(`Could not remove background reminders: ${error.message}`);
+                    return;
+                }
+                ["habits", "checks", "habit-start", "body", "goals", "fitness", "reading-plan", "daily-task", "ai-notes", "ai-plan", "ai-conversation", "ai-reminder", "ai-reminder-push-client"].forEach((k) => store.remove(k));
                 window.location.reload();
             });
         } else if (act === "logout") doLogout();
@@ -2531,26 +3187,333 @@
 
     /* ---------- page handlers ---------- */
 
+    const aiLauncher = document.getElementById("aiLauncher");
+    const aiPanel = document.getElementById("aiPanel");
+    const aiPrompt = document.getElementById("aiPrompt");
+    document.getElementById("aiSetupNote").textContent = location.protocol === "file:"
+        ? "This local file cannot connect to the AI Worker. Open the hosted HTTPS LifeTrack page to use AI."
+        : CFG.GROQ_WORKER_URL
+            ? "Your message and a small habit/goal summary are sent to Groq through your secure Worker. Avoid sharing private or medical details."
+            : "AI is not connected yet. Deploy the secure Groq Worker and set GROQ_WORKER_URL in config.js. Never put the Groq API key in browser files.";
+    renderAIMessages();
+    renderAINotes();
+    aiLauncher.addEventListener("click", () => {
+        aiPanel.hidden = !aiPanel.hidden;
+        aiLauncher.setAttribute("aria-expanded", String(!aiPanel.hidden));
+        if (!aiPanel.hidden) aiPrompt.focus();
+    });
+    document.getElementById("aiClose").addEventListener("click", () => {
+        aiPanel.hidden = true;
+        aiLauncher.setAttribute("aria-expanded", "false");
+        aiLauncher.focus();
+    });
+    document.querySelector(".ai-tabs").addEventListener("click", (event) => {
+        const button = event.target.closest("[data-ai-tab]");
+        if (button) setAITab(button.dataset.aiTab);
+    });
+    const aiChatForm = document.getElementById("aiChatForm");
+    aiPrompt.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+        event.preventDefault();
+        if (!document.getElementById("aiSend").disabled) aiChatForm.requestSubmit();
+    });
+    aiChatForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        sendAIMessage(aiPrompt.value);
+    });
+    document.getElementById("aiMic").addEventListener("click", () => {
+        const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const status = document.getElementById("aiVoiceStatus");
+        if (!Recognition) {
+            status.textContent = "Voice input is not supported in this browser. You can still type your message.";
+            return;
+        }
+        if (aiRecognition) {
+            aiRecognition.stop();
+            aiRecognition = null;
+            return;
+        }
+        const recognition = new Recognition();
+        aiRecognition = recognition;
+        const selectedVoiceLanguage = document.getElementById("aiVoiceLanguage").value;
+        recognition.lang = selectedVoiceLanguage === "auto" ? navigator.language || "en-US" : selectedVoiceLanguage;
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+        status.textContent = "Listening…";
+        recognition.onresult = (event) => {
+            const transcript = Array.from(event.results).map((result) => result[0].transcript).join(" ").trim();
+            aiPrompt.value = [aiPrompt.value.trim(), transcript].filter(Boolean).join(" ");
+            aiPrompt.focus();
+            status.textContent = transcript ? "Voice added to the message. Press Send when ready." : "No speech was detected.";
+        };
+        recognition.onerror = (event) => {
+            status.textContent = event.error === "not-allowed"
+                ? "Microphone permission was denied. Enable it in your browser settings."
+                : `Voice input failed: ${event.error}. You can type your message instead.`;
+        };
+        recognition.onend = () => { aiRecognition = null; };
+        recognition.start();
+    });
+    document.getElementById("aiSpeak").addEventListener("click", () => {
+        const lastReply = aiConversation.slice().reverse().find((message) => message.role === "assistant");
+        const status = document.getElementById("aiVoiceStatus");
+        if (!("speechSynthesis" in window) || !window.SpeechSynthesisUtterance) {
+            status.textContent = "Text-to-speech is not supported in this browser.";
+            return;
+        }
+        if (!lastReply) {
+            status.textContent = "There is no assistant reply to read aloud yet.";
+            return;
+        }
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(lastReply.content);
+        const selectedVoiceLanguage = document.getElementById("aiVoiceLanguage").value;
+        utterance.lang = selectedVoiceLanguage === "auto" ? navigator.language || "en-US" : selectedVoiceLanguage;
+        window.speechSynthesis.speak(utterance);
+        status.textContent = "Reading the latest assistant reply aloud.";
+    });
+    document.getElementById("aiNoteForm").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const input = document.getElementById("aiNoteInput");
+        try {
+            saveAINote(input.value);
+            input.value = "";
+            toast("Note saved on this device.");
+        } catch (error) {
+            toast(error.message);
+        }
+    });
+    document.getElementById("aiNotesList").addEventListener("click", (event) => {
+        const editButton = event.target.closest("[data-note-edit]");
+        const deleteButton = event.target.closest("[data-note-delete]");
+        if (editButton) {
+            const note = aiNotes.find((item) => item.id === editButton.dataset.noteEdit);
+            if (!note) return;
+            const modal = openModal(`<h3>Edit note</h3><textarea id="aiEditNote" class="ai-edit-note" maxlength="1000">${esc(note.text)}</textarea><p class="modal-error" id="aiEditNoteError" hidden>Enter a note of up to 1,000 characters.</p><div class="modal-actions"><button type="button" class="secondary-button" data-cancel>Cancel</button><button type="button" class="primary-button" id="aiSaveEditedNote">Save note</button></div>`);
+            modal.querySelector("#aiSaveEditedNote").addEventListener("click", () => {
+                const input = modal.querySelector("#aiEditNote");
+                const value = input.value.trim();
+                if (!value || value.length > 1000) {
+                    modal.querySelector("#aiEditNoteError").hidden = false;
+                    return;
+                }
+                saveAINote(value, note.id);
+                closeModal();
+                toast("Note updated.");
+            });
+        } else if (deleteButton) {
+            const note = aiNotes.find((item) => item.id === deleteButton.dataset.noteDelete);
+            if (!note) return;
+            confirmModal("Delete this note?", "This note will be removed from this device.", "Delete note", () => {
+                aiNotes = aiNotes.filter((item) => item.id !== note.id);
+                saveAssistantState("ai-notes", aiNotes);
+                renderAINotes();
+                toast("Note deleted.");
+            });
+        }
+    });
+    document.getElementById("aiProposals").addEventListener("click", (event) => {
+        if (event.target.closest("[data-ai-apply]")) applyAIProposals();
+        else if (event.target.closest("[data-ai-reject]")) {
+            pendingAiActions = [];
+            document.getElementById("aiProposals").hidden = true;
+        }
+    });
+    const aiReminderList = document.getElementById("aiReminderList");
+    const aiReminderEnable = document.getElementById("aiReminderEnable");
+    const aiReminderTime = document.getElementById("aiReminderTime");
+    const aiReminderStatus = document.getElementById("aiReminderStatus");
+    aiReminderTime.value = aiReminder.reminders.length
+        ? aiReminder.reminders[aiReminder.reminders.length - 1].time
+        : "09:00";
+    function renderAIReminders() {
+        aiReminderList.replaceChildren();
+        if (!aiReminder.reminders.length) {
+            const empty = document.createElement("p");
+            empty.className = "ai-reminder-empty";
+            empty.textContent = "No reminders yet. Add one below.";
+            aiReminderList.appendChild(empty);
+            return;
+        }
+        aiReminder.reminders.forEach((reminder) => {
+            const row = document.createElement("article");
+            row.className = "ai-reminder-item";
+            const details = document.createElement("span");
+            details.className = "ai-reminder-details";
+            const title = document.createElement("strong");
+            title.textContent = reminder.title;
+            const time = document.createElement("small");
+            time.textContent = new Date(`2000-01-01T${reminder.time}:00`).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+            details.append(title, time);
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.className = "ai-reminder-remove";
+            remove.dataset.reminderRemove = reminder.id;
+            remove.setAttribute("aria-label", `Remove reminder: ${reminder.title}`);
+            remove.title = "Remove reminder";
+            remove.textContent = "Remove";
+            row.append(details, remove);
+            aiReminderList.appendChild(row);
+        });
+    }
+    renderAIReminders();
+    function reminderWorkerUrl(path) {
+        const base = String(CFG.GROQ_WORKER_URL || "").trim().replace(/\/+$/, "");
+        if (!base) throw new Error("The secure reminder Worker is not configured.");
+        const endpoint = new URL(`${base}${path}`);
+        if (endpoint.protocol !== "https:") throw new Error("Background notifications require an HTTPS Worker URL.");
+        return endpoint.toString();
+    }
+    async function postReminderRegistration(body) {
+        const response = await fetch(reminderWorkerUrl("/api/push/subscription"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `Could not update background reminders (HTTP ${response.status}).`);
+    }
+    function generateReminderClientId() {
+        const bytes = crypto.getRandomValues(new Uint8Array(32));
+        let binary = "";
+        bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+        return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+    function vapidApplicationServerKey(value) {
+        const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+        const binary = atob(base64 + "=".repeat((4 - base64.length % 4) % 4));
+        return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    }
+    async function syncAIReminderPush(reminders) {
+        const clientStorageKey = `${NS}ai-reminder-push-client`;
+        const clientId = localStorage.getItem(clientStorageKey);
+        if (!reminders.length) {
+            if (clientId) {
+                await postReminderRegistration({ action: "remove", clientId });
+                localStorage.removeItem(clientStorageKey);
+            }
+            return;
+        }
+        if (!isSecureContext || location.protocol === "file:") {
+            throw new Error("Open LifeTrack from its HTTPS site to enable background notifications.");
+        }
+        if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+            throw new Error("This browser does not support background push notifications.");
+        }
+        const keyResponse = await fetch(reminderWorkerUrl("/api/push/key"));
+        const keyData = await keyResponse.json();
+        if (!keyResponse.ok || typeof keyData.publicKey !== "string") {
+            throw new Error(keyData.error || `Could not load push settings (HTTP ${keyResponse.status}).`);
+        }
+        const registration = await navigator.serviceWorker.register("./service-worker.js", { scope: "./" });
+        let subscription = await registration.pushManager.getSubscription();
+        if (!subscription) {
+            subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: vapidApplicationServerKey(keyData.publicKey)
+            });
+        }
+        const registrationClientId = clientId || generateReminderClientId();
+        localStorage.setItem(clientStorageKey, registrationClientId);
+        await postReminderRegistration({
+            action: "save",
+            clientId: registrationClientId,
+            subscription: subscription.toJSON(),
+            reminders: reminders.map(({ id, title, time, lastSent }) => ({ id, title, time, lastSent })),
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        });
+    }
+    async function requestReminderPermission() {
+        if (!("Notification" in window)) throw new Error("Browser notifications are not supported here.");
+        if (Notification.permission === "granted") return;
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") throw new Error("Notification permission was not granted.");
+    }
+    aiReminderEnable.disabled = aiReminder.reminders.length === 0;
+    aiReminderEnable.addEventListener("click", async () => {
+        if (!aiReminder.reminders.length) {
+            aiReminderStatus.textContent = "Add a reminder first, then enable background notifications.";
+            return;
+        }
+        aiReminderEnable.disabled = true;
+        aiReminderStatus.textContent = "Enabling background notifications…";
+        try {
+            await requestReminderPermission();
+            await syncAIReminderPush(aiReminder.reminders);
+            aiReminderStatus.textContent = "Background notifications are enabled. Push can arrive with this tab closed while your device is online.";
+        } catch (error) {
+            aiReminderStatus.textContent = error.message || "Background notifications could not be enabled.";
+        } finally {
+            aiReminderEnable.disabled = aiReminder.reminders.length === 0;
+        }
+    });
+    document.getElementById("aiReminderForm").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const titleInput = document.getElementById("aiReminderTitle");
+        const title = titleInput.value.trim();
+        const time = aiReminderTime.value;
+        if (!title || title.length > 60 || !/^\d{2}:\d{2}$/.test(time)) {
+            aiReminderStatus.textContent = "Enter a reminder name and a valid time.";
+            return;
+        }
+        if (aiReminder.reminders.length >= 20) {
+            aiReminderStatus.textContent = "You can save up to 20 reminders.";
+            return;
+        }
+        const nextReminders = aiReminder.reminders.concat({ id: assistantId(), title, time, enabled: true, lastSent: "" });
+        aiReminderStatus.textContent = "Saving reminder and enabling push notifications…";
+        try {
+            await requestReminderPermission();
+            await syncAIReminderPush(nextReminders);
+        } catch (error) {
+            aiReminderStatus.textContent = error.message || "The reminder could not be enabled.";
+            return;
+        }
+        aiReminder.reminders = nextReminders;
+        saveAssistantState("ai-reminder", aiReminder);
+        renderAIReminders();
+        aiReminderEnable.disabled = false;
+        titleInput.value = "";
+        aiReminderStatus.textContent = `"${title}" added for ${new Date(`2000-01-01T${time}:00`).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Background push is enabled.`;
+    });
+    aiReminderList.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-reminder-remove]");
+        if (!button) return;
+        const reminder = aiReminder.reminders.find((item) => item.id === button.dataset.reminderRemove);
+        if (!reminder) return;
+        const nextReminders = aiReminder.reminders.filter((item) => item.id !== reminder.id);
+        button.disabled = true;
+        aiReminderStatus.textContent = "Updating background reminders…";
+        syncAIReminderPush(nextReminders).then(() => {
+            aiReminder.reminders = nextReminders;
+            saveAssistantState("ai-reminder", aiReminder);
+            renderAIReminders();
+            aiReminderEnable.disabled = aiReminder.reminders.length === 0;
+            aiReminderStatus.textContent = `"${reminder.title}" reminder removed.`;
+        }).catch((error) => {
+            button.disabled = false;
+            aiReminderStatus.textContent = error.message || "The background reminder could not be removed.";
+        });
+    });
+    if (aiReminder.reminders.length && "Notification" in window && Notification.permission === "granted") {
+        syncAIReminderPush(aiReminder.reminders).then(() => {
+            aiReminderStatus.textContent = "Background notifications are enabled for this device.";
+        }).catch((error) => {
+            aiReminderStatus.textContent = `${error.message || "Background notifications could not be synced."} Tap Enable background notifications to retry.`;
+        });
+    }
+
     document.getElementById("fitActions").addEventListener("click", (e) => {
         const b = e.target.closest("button");
         if (!b) return;
         if (b.id === "gSync") syncGoogle();
-        else if (b.id === "gReconnect") reconnectGoogle();
     });
 
     document.getElementById("fitBody").addEventListener("click", (e) => {
         const w = e.target.closest("[data-water]");
         const mo = e.target.closest("[data-mood]");
-        const sleepAction = e.target.closest("[data-sleep-action]");
         const iso = isoFromUTC(todayUTC());
-        if (sleepAction) {
-            if (sleepAction.dataset.sleepAction === "sync") syncGoogle();
-            else if (sleepAction.dataset.sleepAction === "reconnect") reconnectGoogle();
-            else {
-                manualSleepEditing = sleepAction.dataset.sleepAction === "manual";
-                renderStats();
-            }
-        } else if (w) {
+        if (w) {
             const cur = (fitness[iso] || {}).water || 0;
             setFit("water", Math.max(0, cur + Number(w.dataset.water)));
         } else if (mo) {
@@ -2589,6 +3552,109 @@
             renderCalendar();
         });
     });
+
+    habitManageList.addEventListener("dblclick", (event) => {
+        const label = event.target.closest("[data-edit-habit]");
+        if (!label) {
+            const card = event.target.closest(".habit-card");
+            if (!card || event.target.closest("button, input")) return;
+            habitManageList.querySelectorAll(".is-reorder-selected").forEach((item) => item.classList.remove("is-reorder-selected"));
+            card.classList.add("is-reorder-selected");
+            card.focus();
+            toast("Use the up/down arrow keys to move this habit. Press Enter when done.");
+            return;
+        }
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "hc-name-input";
+        input.value = habits[Number(label.dataset.editHabit)];
+        input.setAttribute("aria-label", "Edit habit name");
+        label.replaceWith(input);
+        input.focus();
+        input.select();
+    });
+
+    habitManageList.addEventListener("keydown", (event) => {
+        const input = event.target.closest(".hc-name-input");
+        if (input) {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                commitHabitEdit(input, true);
+            } else if (event.key === "Escape") {
+                renderManageList();
+            }
+            return;
+        }
+
+        const card = event.target.closest(".habit-card");
+        if (!card) return;
+        if (event.key === "Enter" && card.classList.contains("is-reorder-selected")) {
+            event.preventDefault();
+            card.classList.remove("is-reorder-selected");
+            return;
+        }
+        if (event.key === "Escape" && card.classList.contains("is-reorder-selected")) {
+            card.classList.remove("is-reorder-selected");
+            return;
+        }
+        if (!card.classList.contains("is-reorder-selected") || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+        event.preventDefault();
+        const index = Number(card.dataset.habitIndex);
+        moveHabit(index, index + (event.key === "ArrowUp" ? -1 : 1), true);
+    });
+
+    habitManageList.addEventListener("focusout", (event) => {
+        const input = event.target.closest(".hc-name-input");
+        if (!input || !input.isConnected) return;
+        commitHabitEdit(input, false);
+    });
+
+    let pendingHabitDrag = null;
+    habitManageList.addEventListener("pointerdown", (event) => {
+        const card = event.target.closest(".habit-card");
+        if (!card || event.target.closest("button, input") || event.button !== 0 || event.isPrimary === false) return;
+        const index = Number(card.dataset.habitIndex);
+        const drag = { pointerId: event.pointerId, from: index, to: index, card, started: false, timer: 0 };
+        pendingHabitDrag = drag;
+        drag.timer = window.setTimeout(() => {
+            if (pendingHabitDrag !== drag) return;
+            drag.started = true;
+            drag.card.classList.add("is-dragging");
+            drag.card.setPointerCapture(event.pointerId);
+        }, 280);
+    });
+
+    habitManageList.addEventListener("pointermove", (event) => {
+        const drag = pendingHabitDrag;
+        if (!drag || !drag.started || drag.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        const target = document.elementFromPoint(event.clientX, event.clientY);
+        const card = target && target.closest(".habit-card");
+        habitManageList.querySelectorAll(".habit-card").forEach((item) => item.classList.remove("drop-before", "drop-after"));
+        if (!card) {
+            drag.to = drag.from;
+            return;
+        }
+        const targetIndex = Number(card.dataset.habitIndex);
+        const after = event.clientY > card.getBoundingClientRect().top + card.offsetHeight / 2;
+        drag.to = targetIndex + (after ? 1 : 0);
+        if (drag.to > drag.from) drag.to -= 1;
+        drag.to = Math.max(0, Math.min(habits.length - 1, drag.to));
+        if (drag.to !== drag.from) card.classList.add(after ? "drop-after" : "drop-before");
+    });
+
+    function finishHabitDrag(event, dropped) {
+        const drag = pendingHabitDrag;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        window.clearTimeout(drag.timer);
+        drag.card.classList.remove("is-dragging");
+        habitManageList.querySelectorAll(".habit-card").forEach((item) => item.classList.remove("drop-before", "drop-after"));
+        pendingHabitDrag = null;
+        if (dropped && drag.started) moveHabit(drag.from, drag.to, false);
+    }
+
+    habitManageList.addEventListener("pointerup", (event) => finishHabitDrag(event, true));
+    habitManageList.addEventListener("pointercancel", (event) => finishHabitDrag(event, false));
 
     document.getElementById("goalPageList").addEventListener("click", (e) => {
         const b = e.target.closest("[data-goal-remove]");
@@ -2637,26 +3703,60 @@
         document.getElementById("anYear").hidden = analyticsView !== "year";
     });
 
-    // Refresh Drive changes so open devices pick up habit and fitness edits from each other.
-    function refreshGoogleData() {
-        if (driveToken()) syncCloud();
-        if (googleToken()) syncGoogle();
-    }
-    setInterval(() => { if (document.visibilityState === "visible") refreshGoogleData(); }, 60000);
+    // "live" fitness: refresh every minute while the tab is visible and Google is linked
+    setInterval(() => { if (document.visibilityState === "visible" && googleToken()) syncGoogle(); }, 60000);
     document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") refreshGoogleData();
+        if (document.visibilityState !== "visible") return;
+        if (!dailyTaskState || dailyTaskState.date !== isoFromUTC(todayUTC())) renderDailyTask();
+        if (googleToken()) syncGoogle();
     });
     if (HEALTH_ON && location.protocol !== "file:") loadGIS().catch(() => {});
 
-    document.querySelectorAll(".nav-item").forEach((button) => {
+    document.querySelectorAll(".sidebar .nav-item").forEach((button) => {
         button.addEventListener("click", () => {
-            document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("active"));
-            document.querySelectorAll(".section").forEach((section) => section.classList.remove("active-section"));
-            button.classList.add("active");
-            document.getElementById(button.dataset.section).classList.add("active-section");
-            document.getElementById("pageTitle").textContent = button.querySelector(".nav-text").textContent;
+            navigateToSection(button.dataset.section);
+            button.blur();
         });
     });
+
+    document.getElementById("todayTaskCard").addEventListener("click", (event) => {
+        if (event.target.closest("[data-task-open]")) navigateToSection("tasks");
+    });
+
+    document.getElementById("dailyTaskDetail").addEventListener("click", (event) => {
+        const button = event.target.closest("[data-task-action]");
+        if (!button) return;
+        if (button.dataset.taskAction === "complete") {
+            dailyTaskState.completed = !dailyTaskState.completed;
+            store.set("daily-task", JSON.stringify(dailyTaskState));
+            renderDailyTask();
+            toast(dailyTaskState.completed ? "Daily task complete. Nice work!" : "Task marked as not complete.");
+        } else if (button.dataset.taskAction === "reroll") {
+            dailyTaskState.reroll += 1;
+            dailyTaskState.completed = false;
+            store.set("daily-task", JSON.stringify(dailyTaskState));
+            renderDailyTask();
+        }
+    });
+
+    function navigateToSection(sectionId) {
+        const section = document.getElementById(sectionId);
+        if (!section || !section.classList.contains("section")) return;
+        document.querySelectorAll(".section").forEach((item) => item.classList.toggle("active-section", item === section));
+        document.querySelectorAll(".sidebar .nav-item").forEach((item) => {
+            const isCurrent = item.dataset.section === sectionId;
+            item.classList.toggle("active", isCurrent);
+            if (isCurrent) item.setAttribute("aria-current", "page");
+            else item.removeAttribute("aria-current");
+        });
+        document.getElementById("pageTitle").textContent = ({
+            dashboard: "Dashboard",
+            habits: "Habits",
+            goals: "Goals",
+            analytics: "Analytics",
+            tasks: "Task"
+        })[sectionId];
+    }
 
     document.getElementById("addHabitBtn").addEventListener("click", () => {
         const input = document.getElementById("newHabitInput");
@@ -2697,6 +3797,7 @@
 
     themeToggle.addEventListener("click", () => {
         setTheme(!document.body.classList.contains("dark"));
+        themeToggle.blur();
     });
 
     document.getElementById("bodyEditBtn").addEventListener("click", () => {

@@ -7,64 +7,44 @@
     <meta name="theme-color" content="#0b1730">
     <link rel="apple-touch-icon" href="lifetrack-logo-192.png">
     <link rel="manifest" href="manifest.webmanifest">
+    <script src="pwa.js" defer></script>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%233b82f6'/%3E%3Cstop offset='1' stop-color='%230891b2'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='38' font-family='Arial,sans-serif' font-weight='800' font-size='26' letter-spacing='-1' text-anchor='middle' fill='%23ffffff'%3ELT%3C/text%3E%3Crect x='14' y='49' width='8' height='6' rx='1.5' fill='%23bfe3ff'/%3E%3Crect x='28' y='44' width='8' height='11' rx='1.5' fill='%23bfe3ff'/%3E%3Crect x='42' y='38' width='8' height='17' rx='1.5' fill='%23eafcff'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="dashboard.css">
+    <link rel="stylesheet" href="dashboard.css?v=16">
     <link rel="icon" type="image/png" href="lifetrack-logo.png" sizes="120x120">
 </head>
 <body>
 <div class="app">
-    <aside class="sidebar">
+    <aside class="sidebar" aria-label="Main navigation">
         <div class="logo" id="logoArea">
-            <button type="button" class="logo-btn" id="logoBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="profileMenu" title="Profile &amp; account"><span class="logo-box"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LifeTrack logo">
+            <button type="button" class="logo-btn" id="logoBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="profileMenu" title="Profile &amp; account">
+                <span class="logo-box"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LifeTrack logo">
                     <text x="50" y="56" text-anchor="middle" font-family="Arial, 'Segoe UI', sans-serif" font-weight="800" font-size="44" letter-spacing="-3" fill="#ffffff">LT</text>
                     <g opacity="0.92">
                         <rect x="24" y="80" width="11" height="9" rx="2" fill="#bfe3ff"/>
                         <rect x="44.5" y="73" width="11" height="16" rx="2" fill="#bfe3ff"/>
                         <rect x="65" y="64" width="11" height="25" rx="2" fill="#eafcff"/>
                     </g>
-                </svg></span></button>
-            <div class="logo-text">
-                <h2>LifeTrack</h2>
-                <p>Build your life.</p>
-            </div>
+                </svg></span>
+            </button>
+            <div class="logo-text"><h2>LifeTrack</h2><p>Build your life.</p></div>
         </div>
-
-        <nav class="navigation">
-            <button type="button" class="nav-item active" data-section="dashboard">
-                <span class="nav-icon">📊</span>
-                <span class="nav-text">Dashboard</span>
-            </button>
-            <button type="button" class="nav-item" data-section="habits">
-                <span class="nav-icon">✓</span>
-                <span class="nav-text">Habits</span>
-            </button>
-            <button type="button" class="nav-item" data-section="goals">
-                <span class="nav-icon">🎯</span>
-                <span class="nav-text">Goals</span>
-            </button>
-            <button type="button" class="nav-item" data-section="analytics">
-                <span class="nav-icon">📈</span>
-                <span class="nav-text">Analytics</span>
-            </button>
+        <nav class="navigation" aria-label="Sections">
+            <button type="button" class="nav-item active" data-section="dashboard" aria-current="page" title="Dashboard"><span class="nav-icon">📊</span><span class="nav-text">Dashboard</span></button>
+            <button type="button" class="nav-item" data-section="habits" title="Habits"><span class="nav-icon">✓</span><span class="nav-text">Habits</span></button>
+            <button type="button" class="nav-item" data-section="goals" title="Goals"><span class="nav-icon">🎯</span><span class="nav-text">Goals</span></button>
+            <button type="button" class="nav-item" data-section="analytics" title="Analytics"><span class="nav-icon">📈</span><span class="nav-text">Analytics</span></button>
+            <button type="button" class="nav-item" data-section="tasks" title="Task"><span class="nav-icon">⚡</span><span class="nav-text">Task</span></button>
         </nav>
-
         <div class="sidebar-bottom">
-            <div class="quote-box">
-                <small>DAILY REMINDER</small>
-                <p>Small actions make a big difference.<br>Compounded daily.</p>
-            </div>
-            <button type="button" id="themeToggle" class="theme-button">
-                <span class="nav-icon">🌙</span>
-                <span class="nav-text">Dark Mode</span>
-            </button>
+            <div class="quote-box"><small>DAILY REMINDER</small><p>Small actions make a big difference.<br>Compounded daily.</p></div>
+            <button type="button" id="themeToggle" class="theme-button" aria-pressed="true" title="Change appearance"><span class="nav-icon">☀</span><span class="nav-text">Light Mode</span></button>
         </div>
     </aside>
-
     <main class="main-content">
         <header class="topbar">
             <div>
                 <span class="eyebrow">PERSONAL DEVELOPMENT SYSTEM</span>
-                <h1 id="pageTitle">Daily Progress</h1>
+                <h1 id="pageTitle">Dashboard</h1>
             </div>
 
             <div class="top-actions">
@@ -142,7 +122,7 @@
                 </div>
 
                 <div class="panel streak-panel">
-                    <div class="panel-header"><div><span class="eyebrow">MOMENTUM</span><h2>Current Streaks</h2></div></div>
+                    <div class="panel-header"><div><span class="eyebrow">THIS MONTH · STREAKS</span><h2>Current Streaks</h2></div></div>
                     <div id="streakList" class="streak-list"></div>
                 </div>
             </div>
@@ -208,6 +188,7 @@
                         <div id="fitActions" class="fit-actions"></div>
                     </div>
                     <div id="fitBody"></div>
+                    <div id="todayTaskCard" class="today-task-card"></div>
                 </div>
                 <div class="panel">
                     <div class="panel-header"><div><span class="eyebrow">REWARDS</span><h2>Achievements</h2></div></div>
@@ -216,11 +197,22 @@
             </div>
         </section>
 
+        <section id="tasks" class="section">
+            <div class="page-card task-page-card">
+                <div class="task-page-heading">
+                    <div><span class="eyebrow">YOUR DAILY WILD CARD</span><h2>Today's Task</h2></div>
+                    <span class="task-pool-chip">70,000+ challenges</span>
+                </div>
+                <div id="dailyTaskDetail"></div>
+                <p class="task-safety-note">Keep every challenge safe and comfortable for you. Skip anything that doesn't fit your situation; no posting or sharing is required.</p>
+            </div>
+        </section>
+
         <section id="habits" class="section">
             <div class="page-card">
                 <span class="eyebrow">YOUR SYSTEM</span>
                 <h2>Build Your Habits</h2>
-                <p>Add, remove and track the habits that matter to your life.</p>
+                <p>Add or remove habits. Double-click a name to edit it. Hold and drag a habit card to reorder, or double-click the card and use the up/down arrow keys.</p>
 
                 <div class="add-habit">
                     <input id="newHabitInput" type="text" placeholder="Example: Meditation" autocomplete="off">
@@ -314,12 +306,70 @@
 </div>
 
 <div id="profileMenu" class="profile-menu" role="menu" hidden></div>
+<button type="button" id="aiLauncher" class="ai-launcher" aria-label="Open LifeTrack AI assistant" aria-expanded="false" aria-controls="aiPanel" title="LifeTrack AI assistant">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4M12 3V1"/></svg>
+</button>
+<section id="aiPanel" class="ai-panel" role="dialog" aria-label="LifeTrack AI assistant" aria-modal="false" hidden>
+    <header class="ai-header">
+        <span class="ai-brand-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4M12 3V1"/></svg>
+        </span>
+        <div><strong>LifeTrack AI</strong><small>Habits · goals · daily plan</small></div>
+        <button type="button" class="ai-close" id="aiClose" aria-label="Close AI assistant">×</button>
+    </header>
+    <div class="ai-tabs" role="tablist" aria-label="Assistant views">
+        <button type="button" class="active" data-ai-tab="chat" role="tab" aria-selected="true">Chat</button>
+        <button type="button" data-ai-tab="notes" role="tab" aria-selected="false">Notes</button>
+        <button type="button" data-ai-tab="reminders" role="tab" aria-selected="false">Reminders</button>
+    </div>
+    <div id="aiChatView" class="ai-view" data-ai-view="chat">
+        <p class="ai-privacy-note" id="aiSetupNote"></p>
+        <div id="aiMessages" class="ai-messages" aria-live="polite"></div>
+        <div id="aiProposals" class="ai-proposals" hidden></div>
+        <form id="aiChatForm" class="ai-compose">
+            <textarea id="aiPrompt" rows="2" maxlength="1200" placeholder="Ask about your habits or goals… (Enter to send)" aria-label="Message the AI assistant"></textarea>
+            <div class="ai-compose-actions">
+                <button type="button" id="aiMic" class="ai-icon-button" aria-label="Speak your message" title="Voice input">🎙</button>
+                <button type="button" id="aiSpeak" class="ai-icon-button" aria-label="Read the latest reply aloud" title="Read aloud">🔊</button>
+                <select id="aiVoiceLanguage" class="ai-voice-language" aria-label="Voice language"><option value="auto">Auto</option><option value="hi-IN">हिन्दी</option><option value="en-US">English</option></select>
+                <button type="submit" id="aiSend" class="ai-send">Send</button>
+            </div>
+            <small id="aiVoiceStatus" class="ai-status" aria-live="polite"></small>
+        </form>
+    </div>
+    <div id="aiNotesView" class="ai-view" data-ai-view="notes" hidden>
+        <p class="ai-privacy-note">Notes stay on this device, unless you include them in a downloaded backup.</p>
+        <form id="aiNoteForm" class="ai-note-form">
+            <textarea id="aiNoteInput" rows="3" maxlength="1000" placeholder="Write a thought or save a note…" aria-label="New note"></textarea>
+            <button type="submit" class="ai-send">Save note</button>
+        </form>
+        <div id="aiNotesList" class="ai-notes-list"></div>
+    </div>
+    <div id="aiRemindersView" class="ai-view ai-reminders-view" data-ai-view="reminders" hidden>
+        <div class="ai-reminder-intro">
+            <strong>Your reminders</strong>
+            <p class="ai-privacy-note">Push notifications can arrive while this tab is closed. Install LifeTrack on your device and allow notifications; delivery can still depend on browser and device settings.</p>
+        </div>
+        <div id="aiReminderList" class="ai-reminder-list" aria-live="polite"></div>
+        <button type="button" id="aiReminderEnable" class="ai-reminder-enable">Enable background notifications</button>
+        <form id="aiReminderForm" class="ai-reminder-form">
+            <label class="ai-reminder-field">Reminder name
+                <input id="aiReminderTitle" type="text" maxlength="60" placeholder="e.g. Drink some water" required>
+            </label>
+            <label class="ai-reminder-field">Reminder time
+                <input id="aiReminderTime" type="time" value="09:00" required>
+            </label>
+            <button type="submit" id="aiReminderSave" class="ai-send ai-reminder-save">＋ Add reminder</button>
+        </form>
+        <small id="aiReminderStatus" class="ai-status ai-reminder-status" aria-live="polite">Add a reminder and enable push to receive notifications while the tab is closed.</small>
+    </div>
+</section>
 <div id="modalRoot"></div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <input type="file" id="importFile" accept="application/json,.json" hidden>
 
 <script src="config.js"></script>
-<script src="dashboard.js"></script>
+<script src="dashboard.js?v=16"></script>
 
 <footer class="lt-footer"><span><a class="footer-privacy" href="privacy.html" aria-label="Privacy policy">© <strong>LT Series</strong></a> | <a class="footer-privacy" href="terms.html">Terms of Service</a> | <span class="footer-credit">Made by Suraj Shukla</span></span></footer>
 </body>

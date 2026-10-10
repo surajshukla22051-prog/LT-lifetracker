@@ -17,6 +17,78 @@ and installable web-app icon through `manifest.webmanifest`.
 The public Privacy Policy and Terms of Service are available in `privacy.html`
 and `terms.html`.
 
+## Install LifeTrack as an app
+
+Deploy the site to GitHub Pages and open the HTTPS site once on each device.
+On Android, open Chrome's menu and choose **Install app** or **Add to Home
+screen**. On Windows, open the site in Chrome or Edge and choose **Install
+LifeTrack** from the address bar or browser menu. The service worker caches the
+app shell for launch when offline; Google sign-in, Drive sync, and health sync
+still require an internet connection. Updates are fetched from the site when
+online.
+
+## LifeTrack AI (Groq)
+
+The dashboard includes a blue bell assistant for text chat, optional browser
+speech input/output, private notes, and review-before-save suggestions for
+habits, goals, Daily Body & Mind Plan preferences, and extra plan tasks. Notes and custom
+plan tasks are stored in this browser/account namespace and included in manual
+LifeTrack backup files; AI chat history stays in this browser and is not sent
+with backups. When you send a prompt, LifeTrack sends the recent chat, habit
+names, goal summary, a seven-day check-in count, and limited plan preferences
+to Groq through the Worker. It does not send body measurements or saved notes
+as context. Avoid including sensitive health or personal information in chat.
+
+The Groq API key must stay in a server-side secret. To deploy the included
+Cloudflare Worker:
+
+1. Install Node.js and sign in to a Cloudflare account.
+2. From the `worker` directory, run `npx wrangler login`.
+3. Edit `worker/wrangler.toml` and set `ALLOWED_ORIGINS` to the exact HTTPS
+   origin serving LifeTrack (for this GitHub Pages site, the origin has no
+   repository path).
+4. From the `worker` directory, deploy the Worker, then set the key as a
+   secret:
+
+   ```powershell
+   npx wrangler deploy
+   npx wrangler secret put GROQ_API_KEY
+   ```
+
+   Paste the key only into Wrangler's hidden prompt. Never add it to `config.js`,
+   source code, or chat. The optional Worker variable `GROQ_MODEL` can select a
+   Groq model; the configured default is `openai/gpt-oss-120b`.
+5. Copy the deployed Worker HTTPS URL into `GROQ_WORKER_URL` in `config.js`,
+   without adding `/api/assistant`, then publish the updated static site.
+
+The Worker only accepts requests from the configured origin, limits request
+size, and has a best-effort per-instance request throttle. Configure Cloudflare
+edge rate limiting for stronger production abuse protection; browser-origin
+checks alone are not authentication.
+
+Reminder notifications use browser push with the Cloudflare Worker scheduler.
+After a user grants notification permission and enables reminders from the
+hosted HTTPS site, the Worker checks schedules every minute and can send pushes
+while the tab is closed. The user's reminder names/times, time zone and browser
+push subscription are stored in the Worker-bound Cloudflare KV namespace. Push
+payloads are encrypted for the browser by Web Push; the Worker still needs the
+subscription details to deliver them. Remove reminders in LifeTrack to remove
+their server-side schedule. The device must be online and allow background
+notifications; mobile users may need to install LifeTrack as an app. Browser
+or operating-system power settings can delay or suppress delivery. This
+scheduler sends reminders, not continuous/background AI.
+
+The Worker KV namespace, per-minute Cron Trigger and VAPID key are configured
+for this deployment. For a new Cloudflare account, create a `PUSH_SUBSCRIPTIONS`
+KV namespace with Wrangler and replace the namespace ID in `worker/wrangler.toml`.
+Create a VAPID P-256 key pair, put the private JWK in the Cloudflare
+`VAPID_PRIVATE_JWK` Worker secret, and put only its matching public key in
+`VAPID_PUBLIC_KEY` in `wrangler.toml`. Never commit the private JWK.
+The push subscription and reminder schedule belong to the browser/device that
+enabled them. Enable notifications separately on each device; removing the
+reminders or using **Delete all your data** removes that device's server-side
+schedule.
+
 ## Google Login
 
 The Google button on `index.html` signs in and requests Drive app-data access
