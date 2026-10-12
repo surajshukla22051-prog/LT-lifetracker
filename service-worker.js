@@ -1,11 +1,11 @@
-const CACHE_NAME = "lifetrack-shell-v11";
+const CACHE_NAME = "lifetrack-shell-v12";
 const APP_SHELL = [
     "./",
     "./index.html",
     "./dashboard.html",
     "./dashboard.css?v=16",
     "./auth.css",
-    "./dashboard.js?v=20",
+    "./dashboard.js?v=21",
     "./pwa.js",
     "./config.js",
     "./manifest.webmanifest",

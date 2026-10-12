@@ -21,6 +21,7 @@
     const NS = "lifetrack:" + currentUser.uid + ":";
     let cloudTimer = null;
     let cloudSyncing = false;
+    let cloudSyncRequested = false;
     let cloudApplying = false;
     let cloudFileId = null;
     const store = {
@@ -2371,15 +2372,17 @@
     }
 
     async function syncCloud() {
-        if (cloudSyncing || !driveToken()) return;
+        if (!driveToken()) return;
+        if (cloudSyncing) {
+            cloudSyncRequested = true;
+            return;
+        }
         cloudSyncing = true;
+        cloudSyncRequested = false;
         try {
             const listResponse = await driveRequest("https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&pageSize=10&fields=files(id,name)");
             const listed = await listResponse.json();
             const file = (listed.files || []).find((entry) => entry.name === "lifetrack-data.json");
-            const localUpdatedAt = Number(localStorage.getItem(NS + "cloud-updated-at")) || 0;
-            const lastCloudSyncAt = Number(localStorage.getItem(NS + "cloud-synced-at")) || 0;
-            const hasLocalChanges = localUpdatedAt > lastCloudSyncAt;
             let remote = null;
 
             if (file) {
@@ -2387,6 +2390,10 @@
                 const response = await driveRequest(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
                 remote = await response.json();
             }
+
+            const localUpdatedAt = Number(localStorage.getItem(NS + "cloud-updated-at")) || 0;
+            const lastCloudSyncAt = Number(localStorage.getItem(NS + "cloud-synced-at")) || 0;
+            const hasLocalChanges = localUpdatedAt > lastCloudSyncAt;
 
             if (remote && remote.app === "LifeTrack" && Number(remote.updatedAt) > localUpdatedAt && !hasLocalChanges) {
                 cloudApplying = true;
@@ -2483,7 +2490,10 @@
                         body
                     });
                 }
-                localStorage.setItem(NS + "cloud-updated-at", String(snapshot.updatedAt));
+                const latestLocalUpdatedAt = Number(localStorage.getItem(NS + "cloud-updated-at")) || 0;
+                if (latestLocalUpdatedAt <= snapshot.updatedAt) {
+                    localStorage.setItem(NS + "cloud-updated-at", String(snapshot.updatedAt));
+                }
                 localStorage.setItem(NS + "cloud-synced-at", String(snapshot.updatedAt));
             }
             setFitStatus("LifeTrack data synced to your Google account.", "good");
@@ -2493,6 +2503,13 @@
             setFitStatus(error.message, "warn");
         } finally {
             cloudSyncing = false;
+            if (cloudSyncRequested) {
+                cloudSyncRequested = false;
+                if (driveToken()) {
+                    clearTimeout(cloudTimer);
+                    cloudTimer = setTimeout(() => syncCloud(), 700);
+                }
+            }
         }
     }
 
