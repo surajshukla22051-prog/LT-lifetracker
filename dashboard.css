@@ -626,6 +626,32 @@ body.dark .stat-card:nth-child(2) {
     white-space: nowrap;
 }
 
+.habit-table td:first-child {
+    cursor: grab;
+    touch-action: none;
+}
+
+.habit-table td:first-child:active {
+    cursor: grabbing;
+}
+
+.habit-table td:first-child.is-reorder-selected {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
+}
+
+.habit-table tbody tr.is-dragging {
+    opacity: 0.55;
+}
+
+.habit-table tbody tr.drop-before td {
+    border-top: 2px solid var(--primary);
+}
+
+.habit-table tbody tr.drop-after td {
+    border-bottom: 2px solid var(--primary);
+}
+
 /* ---------- Habit tracker: clean rounded-square tick boxes ---------- */
 .habit-box {
     position: relative;

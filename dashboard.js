@@ -294,9 +294,14 @@
 
         calendarHead.appendChild(headerRow);
 
-        habits.forEach((habit) => {
+        habits.forEach((habit, habitIndex) => {
             const row = document.createElement("tr");
-            row.appendChild(createCell("td", habit));
+            row.dataset.habitIndex = String(habitIndex);
+            const nameCell = createCell("td", habit);
+            nameCell.tabIndex = 0;
+            nameCell.dataset.habitIndex = String(habitIndex);
+            nameCell.setAttribute("aria-label", `${habit}. Hold and drag to reorder, or double-click and use the up/down arrow keys.`);
+            row.appendChild(nameCell);
 
             for (let day = 1; day <= days; day += 1) {
                 const cell = document.createElement("td");
@@ -1944,7 +1949,13 @@
         habits.splice(to, 0, moved);
         saveState();
         renderCalendar();
-        if (restoreFocus) {
+        if (restoreFocus === "table") {
+            const cell = habitBody.querySelector(`tr[data-habit-index="${to}"] td:first-child`);
+            if (cell) {
+                cell.classList.add("is-reorder-selected");
+                cell.focus();
+            }
+        } else if (restoreFocus) {
             const card = habitManageList.querySelector(`[data-habit-index="${to}"]`);
             if (card) {
                 card.classList.add("is-reorder-selected");
@@ -1952,6 +1963,76 @@
             }
         }
     }
+
+    habitBody.addEventListener("dblclick", (event) => {
+        const cell = event.target.closest("td:first-child");
+        if (!cell) return;
+        habitBody.querySelectorAll(".is-reorder-selected").forEach((item) => item.classList.remove("is-reorder-selected"));
+        cell.classList.add("is-reorder-selected");
+        cell.focus();
+        toast("Use the up/down arrow keys to move this habit. Press Enter when done.");
+    });
+
+    habitBody.addEventListener("keydown", (event) => {
+        const cell = event.target.closest("td:first-child");
+        if (!cell || !cell.classList.contains("is-reorder-selected")) return;
+        if (event.key === "Enter" || event.key === "Escape") {
+            event.preventDefault();
+            cell.classList.remove("is-reorder-selected");
+            return;
+        }
+        if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+        event.preventDefault();
+        const index = Number(cell.dataset.habitIndex);
+        moveHabit(index, index + (event.key === "ArrowUp" ? -1 : 1), "table");
+    });
+
+    let pendingTableHabitDrag = null;
+    habitBody.addEventListener("pointerdown", (event) => {
+        const cell = event.target.closest("td:first-child");
+        if (!cell || event.button !== 0 || event.isPrimary === false) return;
+        const index = Number(cell.dataset.habitIndex);
+        const drag = { pointerId: event.pointerId, from: index, to: index, cell, started: false, timer: 0 };
+        pendingTableHabitDrag = drag;
+        drag.timer = window.setTimeout(() => {
+            if (pendingTableHabitDrag !== drag) return;
+            drag.started = true;
+            drag.cell.closest("tr").classList.add("is-dragging");
+            drag.cell.setPointerCapture(event.pointerId);
+        }, 280);
+    });
+
+    habitBody.addEventListener("pointermove", (event) => {
+        const drag = pendingTableHabitDrag;
+        if (!drag || !drag.started || drag.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        const target = document.elementFromPoint(event.clientX, event.clientY);
+        const row = target && target.closest("#habitBody tr");
+        habitBody.querySelectorAll("tr").forEach((item) => item.classList.remove("drop-before", "drop-after"));
+        if (!row) {
+            drag.to = drag.from;
+            return;
+        }
+        const targetIndex = Number(row.dataset.habitIndex);
+        const after = event.clientY > row.getBoundingClientRect().top + row.offsetHeight / 2;
+        drag.to = targetIndex + (after ? 1 : 0);
+        if (drag.to > drag.from) drag.to -= 1;
+        drag.to = Math.max(0, Math.min(habits.length - 1, drag.to));
+        if (drag.to !== drag.from) row.classList.add(after ? "drop-after" : "drop-before");
+    });
+
+    function finishTableHabitDrag(event, dropped) {
+        const drag = pendingTableHabitDrag;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        window.clearTimeout(drag.timer);
+        drag.cell.closest("tr").classList.remove("is-dragging");
+        habitBody.querySelectorAll("tr").forEach((item) => item.classList.remove("drop-before", "drop-after"));
+        pendingTableHabitDrag = null;
+        if (dropped && drag.started) moveHabit(drag.from, drag.to, "table");
+    }
+
+    habitBody.addEventListener("pointerup", (event) => finishTableHabitDrag(event, true));
+    habitBody.addEventListener("pointercancel", (event) => finishTableHabitDrag(event, false));
 
     function commitHabitEdit(input, keepInvalid) {
         if (!input.isConnected) return;
