@@ -2327,7 +2327,8 @@
 
     function scheduleCloudSync() {
         if (cloudApplying) return;
-        localStorage.setItem(NS + "cloud-updated-at", String(Date.now()));
+        const previousUpdatedAt = Number(localStorage.getItem(NS + "cloud-updated-at")) || 0;
+        localStorage.setItem(NS + "cloud-updated-at", String(Math.max(Date.now(), previousUpdatedAt + 1)));
         if (!driveToken()) {
             const status = document.getElementById("fitStatus");
             if (status && currentUser.provider === "google") {
