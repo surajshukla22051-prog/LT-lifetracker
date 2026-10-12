@@ -245,7 +245,7 @@
     }
 
     function mergeHabitNames(local, remote, removed) {
-        return Array.from(new Set([...(remote || []), ...(local || [])].map(String)))
+        return Array.from(new Set([...(local || []), ...(remote || [])].map(String)))
             .filter((name) => !(removed[name] && removed[name].deleted));
     }
 
