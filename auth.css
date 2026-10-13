@@ -10,7 +10,10 @@ body.auth-body {
     padding: 24px;
     position: relative;
     overflow-x: hidden;
-    background: var(--bg);
+    background:
+        radial-gradient(560px 420px at 100% 0%, rgba(118, 82, 214, 0.09), transparent 70%),
+        radial-gradient(560px 420px at 0% 100%, rgba(8, 127, 206, 0.07), transparent 70%),
+        linear-gradient(145deg, #f5f7fa 0%, var(--bg) 54%, #e3e8f0 100%);
 }
 
 /* soft blue glow orbs behind the card, brighter/neon in dark mode */
@@ -28,20 +31,20 @@ body.auth-body::before {
     left: -140px;
     width: 420px;
     height: 420px;
-    background: rgba(37, 99, 235, 0.22);
+    background: rgba(43, 95, 198, 0.20);
 }
 body.auth-body::after {
     right: -160px;
     bottom: -160px;
     width: 460px;
     height: 460px;
-    background: rgba(8, 145, 178, 0.18);
+    background: rgba(118, 82, 214, 0.18);
 }
 body.dark.auth-body::before {
-    background: rgba(77, 166, 255, 0.28);
+    background: rgba(38, 79, 169, 0.34);
 }
 body.dark.auth-body::after {
-    background: rgba(34, 211, 238, 0.22);
+    background: rgba(160, 123, 255, 0.15);
 }
 
 .auth-theme-toggle {
@@ -73,10 +76,12 @@ body.dark .auth-theme-toggle {
     border: 1px solid var(--line);
     border-radius: 18px;
     background: var(--panel);
-    box-shadow: 0 24px 60px rgba(18, 52, 110, 0.14);
+    background: linear-gradient(150deg, var(--panel), color-mix(in srgb, var(--panel) 93%, var(--track)));
+    box-shadow: 0 26px 70px rgba(17, 35, 75, 0.18), 0 1px 0 rgba(255,255,255,.88) inset;
 }
 body.dark .auth-card {
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--primary-glow);
+    background: linear-gradient(150deg, #111824, var(--panel) 74%);
+    box-shadow: 0 28px 76px rgba(0, 0, 0, 0.62), 0 0 34px rgba(48, 91, 183, 0.14), 0 1px 0 rgba(221,232,248,.06) inset;
 }
 
 .auth-logo {
@@ -90,6 +95,7 @@ body.dark .auth-card {
     min-width: 52px;
     height: 52px;
     border-radius: 12px;
+    box-shadow: 0 0 0 2px rgba(191, 204, 225, 0.78), 0 8px 24px rgba(34, 77, 164, 0.28);
 }
 .auth-logo h1 {
     margin: 0;

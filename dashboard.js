@@ -1,5 +1,6 @@
 (function () {
     "use strict";
+    if (window.LT_REDIRECTING) return;
 
     const currentUser = JSON.parse(localStorage.getItem("lifetrack-user") || "null");
     if (!currentUser || !currentUser.name) {
@@ -960,7 +961,7 @@
        ====================================================================== */
 
     const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const PALETTE = ["#4da6ff", "#22d3ee", "#a78bfa", "#f472b6", "#fbbf24", "#34d399", "#fb7185", "#60a5fa"];
+    const PALETTE = ["#2758b8", "#7652d6", "#087fce", "#d76c50", "#a56a00", "#c34c83", "#536783", "#174bc1"];
     const FIT_ON = Boolean(CFG.GOOGLE_FIT);
     // Google Health API rejects tokens that also carry old Fit scopes, so only ONE family is ever requested.
     const HEALTH_SCOPES = (FIT_ON ? [
@@ -2209,7 +2210,7 @@
         document.getElementById("fitTrend").innerHTML =
             metricCard("Steps", monthlyFitSeries("steps", 1), tg.steps, "var(--primary)", "", dayLabels, elapsed, `${monthNames[m]} ${y}`) +
             metricCard("Water", monthlyFitSeries("water", 1000), tg.water / 1000, "var(--accent)", " L", dayLabels, elapsed, `${monthNames[m]} ${y}`) +
-            metricCard("Sleep", monthlyFitSeries("sleep", 1), tg.sleep, "#a78bfa", " h", dayLabels, elapsed, `${monthNames[m]} ${y}`);
+            metricCard("Sleep", monthlyFitSeries("sleep", 1), tg.sleep, "#8b9bb5", " h", dayLabels, elapsed, `${monthNames[m]} ${y}`);
 
         renderYearly(s);
     }
@@ -2275,7 +2276,7 @@
         document.getElementById("fitTrendYear").innerHTML =
             yearMetricCard("Steps · avg/day", yearMetric("steps", 1), tg.steps, "var(--primary)", "") +
             yearMetricCard("Water · avg/day", yearMetric("water", 1000), tg.water / 1000, "var(--accent)", " L") +
-            yearMetricCard("Sleep · avg/day", yearMetric("sleep", 1), tg.sleep, "#a78bfa", " h");
+            yearMetricCard("Sleep · avg/day", yearMetric("sleep", 1), tg.sleep, "#8b9bb5", " h");
 
         // year kpis
         let perfect = 0;
@@ -2338,67 +2339,66 @@
         } catch (e) { return null; }
     }
 
+    let persistentGoogleRefresh = null;
+
+    async function refreshPersistentGoogleSession() {
+        if (currentUser.provider !== "google" || location.protocol === "file:") return false;
+        const existingToken = driveToken();
+        if (existingToken) {
+            const stored = JSON.parse(sessionStorage.getItem("lifetrack-drive-token") || "null");
+            if (stored && stored.exp > Date.now() + 120_000) return true;
+        }
+        if (persistentGoogleRefresh) return persistentGoogleRefresh;
+
+        persistentGoogleRefresh = (async () => {
+            const response = await fetch("/api/auth/session", {
+                credentials: "same-origin",
+                cache: "no-store"
+            });
+            if (response.status === 401) {
+                sessionStorage.removeItem("lifetrack-drive-token");
+                sessionStorage.removeItem("lifetrack-gtoken");
+                setFitStatus("Google Drive sync needs reconnecting. Your LifeTrack account is still signed in; choose Reconnect Google sync from the profile menu.", "warn");
+                return false;
+            }
+            if (!response.ok) throw new Error(`Could not refresh the Google session (HTTP ${response.status}).`);
+            const session = await response.json();
+            if (!session.user || session.user.uid !== currentUser.uid || !session.accessToken) {
+                throw new Error("The saved Google session belongs to a different LifeTrack account. Reconnect Google sync from the profile menu.");
+            }
+            const scopes = new Set(Array.isArray(session.scopes) ? session.scopes : []);
+            if (!scopes.has("https://www.googleapis.com/auth/drive.appdata")) {
+                sessionStorage.removeItem("lifetrack-drive-token");
+                sessionStorage.removeItem("lifetrack-gtoken");
+                setFitStatus("Allow Google Drive app-data access to resume secure syncing.", "warn");
+                return false;
+            }
+            const expiry = Date.now() + Math.max(30, Number(session.expiresIn || 3600) - 60) * 1000;
+            sessionStorage.setItem("lifetrack-drive-token", JSON.stringify({ token: session.accessToken, exp: expiry }));
+            if (HEALTH_ON && HEALTH_SCOPES.split(/\s+/).every((scope) => scopes.has(scope))) {
+                sessionStorage.setItem("lifetrack-gtoken", JSON.stringify({
+                    token: session.accessToken,
+                    exp: expiry,
+                    scopes: HEALTH_SCOPES
+                }));
+            } else {
+                sessionStorage.removeItem("lifetrack-gtoken");
+            }
+            return true;
+        })();
+        try {
+            return await persistentGoogleRefresh;
+        } finally {
+            persistentGoogleRefresh = null;
+        }
+    }
+
     function reconnectGoogleSync() {
         if (location.protocol === "file:") {
             toast("Google sync can only reconnect from the hosted HTTPS LifeTrack site.");
             return;
         }
-        if (!/^[0-9]+-.+\.apps\.googleusercontent\.com$/.test(GID)) {
-            toast("Google sync is not configured. Check the OAuth Client ID in config.js.");
-            return;
-        }
-        const requestToken = () => {
-            const scopes = ["openid", "email", "profile", "https://www.googleapis.com/auth/drive.appdata"];
-            if (HEALTH_ON) scopes.push(...HEALTH_SCOPES.split(/\s+/).filter(Boolean));
-            const client = google.accounts.oauth2.initTokenClient({
-                client_id: GID,
-                scope: scopes.join(" "),
-                include_granted_scopes: false,
-                callback: async (response) => {
-                    if (response.error || !response.access_token) {
-                        toast(`Google sync could not reconnect${response.error ? ` (${response.error})` : ""}.`);
-                        return;
-                    }
-                    const grantedScopes = new Set(String(response.scope || scopes.join(" ")).split(/\s+/));
-                    if (!grantedScopes.has("https://www.googleapis.com/auth/drive.appdata")) {
-                        sessionStorage.removeItem("lifetrack-drive-token");
-                        sessionStorage.removeItem("lifetrack-gtoken");
-                        toast("Allow Google Drive app-data access to resume secure syncing.");
-                        return;
-                    }
-                    try {
-                        const expiry = Date.now() + (Number(response.expires_in || 3600) - 60) * 1000;
-                        sessionStorage.setItem("lifetrack-drive-token", JSON.stringify({ token: response.access_token, exp: expiry }));
-                        if (HEALTH_ON && HEALTH_SCOPES.split(/\s+/).every((scope) => grantedScopes.has(scope))) {
-                            sessionStorage.setItem("lifetrack-gtoken", JSON.stringify({
-                                token: response.access_token,
-                                exp: expiry,
-                                scopes: HEALTH_SCOPES
-                            }));
-                        } else {
-                            sessionStorage.removeItem("lifetrack-gtoken");
-                        }
-                    } catch (error) {
-                        console.error("LifeTrack could not save temporary Google authorization.", error);
-                        toast("Google authorization succeeded, but could not be saved for this session.");
-                        return;
-                    }
-                    toast("Google sync reconnected. Your LifeTrack account stayed signed in.");
-                    await syncCloud();
-                    if (googleToken()) syncGoogle();
-                },
-                error_callback: () => toast("The Google window was closed or blocked. Allow pop-ups and try again.")
-            });
-            client.requestAccessToken();
-        };
-        if (window.google && google.accounts && google.accounts.oauth2) {
-            requestToken();
-        } else {
-            loadGIS().then(requestToken).catch((error) => {
-                console.error("LifeTrack could not load Google sign-in.", error);
-                toast(`Google sign-in could not load: ${error.message}`);
-            });
-        }
+        window.location.assign("/api/auth/google/start?returnTo=dashboard.html");
     }
 
     function scheduleCloudSync() {
@@ -2434,14 +2434,16 @@
         };
     }
 
-    async function driveRequest(url, options) {
-        const token = driveToken();
+    async function driveRequest(url, options, retried) {
+        let token = driveToken();
+        if (!token && await refreshPersistentGoogleSession()) token = driveToken();
         if (!token) throw new Error("Google sync needs reconnecting. Your LifeTrack account is still signed in; choose Reconnect Google sync from the profile menu.");
         const response = await fetch(url, Object.assign({}, options, {
             headers: Object.assign({ Authorization: `Bearer ${token}` }, options && options.headers || {})
         }));
         if (response.status === 401) {
             sessionStorage.removeItem("lifetrack-drive-token");
+            if (!retried && await refreshPersistentGoogleSession()) return driveRequest(url, options, true);
             throw new Error("Google sync authorization expired. Your LifeTrack account is still signed in; choose Reconnect Google sync from the profile menu.");
         }
         if (!response.ok) throw new Error(`Google Drive sync failed (HTTP ${response.status}).`);
@@ -2644,7 +2646,7 @@
             ${tile("water", "Water", f.water || 0, tg.water, "var(--accent)", `${((f.water || 0) / 1000).toFixed(2)} / ${(tg.water / 1000).toFixed(1)} L`,
                 `<div class="fit-btns"><button type="button" data-water="-250" aria-label="Remove 250 ml">−</button><button type="button" data-water="250" aria-label="Add 250 ml">+250 ml</button></div>`,
                 lastSevenDayAverage("water", 1000, (value) => `${value.toFixed(1)} L`))}
-            ${tile("sleep", "Sleep", f.sleep || 0, tg.sleep, "#a78bfa", `${(f.sleep || 0).toFixed(1)} / ${tg.sleep} h`,
+            ${tile("sleep", "Sleep", f.sleep || 0, tg.sleep, "#8b9bb5", `${(f.sleep || 0).toFixed(1)} / ${tg.sleep} h`,
                 `<input class="fit-input" type="number" min="0" max="24" step="0.5" inputmode="decimal" data-field="sleep" value="${f.sleep || ""}" placeholder="Hours slept" aria-label="Hours slept">`,
                 lastSevenDayAverage("sleep", 1, (value) => `${value.toFixed(1)} h`))}
             ${tile("active", "Focus", f.active || 0, tg.active, "var(--zone-orange)", `${f.active || 0} / ${tg.active} min`,
@@ -2668,13 +2670,19 @@
         renderStats();
     }
 
-    async function gfetch(url, opts) {
-        const token = googleToken();
+    async function gfetch(url, opts, retried) {
+        let token = googleToken();
+        if (!token && await refreshPersistentGoogleSession()) token = googleToken();
         if (!token) throw new Error("expired");
         const res = await fetch(url, Object.assign({}, opts, {
             headers: Object.assign({ Authorization: `Bearer ${token}`, Accept: "application/json", "Content-Type": "application/json" }, (opts && opts.headers) || {})
         }));
-        if (res.status === 401) { sessionStorage.removeItem("lifetrack-gtoken"); throw new Error("expired"); }
+        if (res.status === 401) {
+            sessionStorage.removeItem("lifetrack-drive-token");
+            sessionStorage.removeItem("lifetrack-gtoken");
+            if (!retried && await refreshPersistentGoogleSession()) return gfetch(url, opts, true);
+            throw new Error("expired");
+        }
         if (!res.ok) {
             let detail = "";
             try { const j = await res.json(); detail = (j && j.error && (j.error.message || j.error.status)) || ""; } catch (_) { /* no body */ }
@@ -2822,18 +2830,6 @@
         }
     }
 
-    function loadGIS() {
-        return new Promise((resolve, reject) => {
-            if (window.google && google.accounts && google.accounts.oauth2) { resolve(); return; }
-            const s = document.createElement("script");
-            s.src = "https://accounts.google.com/gsi/client";
-            s.async = true;
-            s.onload = () => resolve();
-            s.onerror = () => reject(new Error("Could not load Google sign-in. Check your internet connection."));
-            document.head.appendChild(s);
-        });
-    }
-
     /* ---------- modal + menu ---------- */
 
     function closeModal() { document.getElementById("modalRoot").innerHTML = ""; }
@@ -2972,7 +2968,7 @@
         container.innerHTML = "";
         const messages = aiConversation.length ? aiConversation : [{
             role: "assistant",
-            content: "Hi! I can help with habits, goals, notes, and extra tasks for your Daily Body & Mind Plan. Ask me to suggest or make changes; I will show you a review before saving."
+            content: "Hi! I can help with habits, goals, notes, and extra tasks for your Daily Body & Mind Plan. I can also mark a habit done or undo today's check-in. Ask me to make a change and I will show you a review before saving."
         }];
         messages.slice(-AI_HISTORY_MESSAGE_LIMIT).forEach((message) => {
             const bubble = document.createElement("div");
@@ -3008,6 +3004,10 @@
         }
         return {
             habits: habits.slice(0, 25).map((habit) => habit.slice(0, 60)),
+            todayHabitStatus: habits.slice(0, 25).map((habit) => ({
+                name: habit.slice(0, 60),
+                done: Boolean(checks[keyFor(now, habit)])
+            })),
             goals: goals.slice(0, 20).map(({ id, name, habit, target }) => ({ id, name: String(name).slice(0, 60), habit: String(habit).slice(0, 60), target })),
             lastSevenDays: { dailyCheckins, total: checkinsLastWeek },
             bodyMindPlan: {
@@ -3024,6 +3024,7 @@
     function validateAiActions(actions) {
         if (!Array.isArray(actions) || actions.length > 5) throw new Error("The assistant suggested an invalid set of changes.");
         const habitNames = new Set(habits);
+        const checkedHabitNames = new Set();
         const goalIds = new Set(goals.map((goal) => goal.id));
         const planIds = new Set(aiPlanTasks.map((task) => task.id));
         return actions.map((action) => {
@@ -3054,6 +3055,19 @@
                     if (!habitNames.has(name)) throw new Error(`Habit "${name}" no longer exists.`);
                     habitNames.delete(name);
                     return { type: action.type, name };
+                }
+                case "habit_check": {
+                    const name = text("name", 60, true);
+                    if (!habitNames.has(name)) throw new Error(`Habit "${name}" no longer exists.`);
+                    if (typeof action.done !== "boolean") throw new Error("A habit check-in must be marked done or undone.");
+                    if (checkedHabitNames.has(name)) throw new Error(`The assistant suggested more than one check-in for "${name}".`);
+                    checkedHabitNames.add(name);
+                    if (action.done && name.toLowerCase() === "read"
+                        && !checks[keyFor(todayUTC(), name)]
+                        && readingPlan.currentPage < readingPlan.dailyEnd) {
+                        throw new Error(`Complete pages ${readingPlan.dailyStart}-${readingPlan.dailyEnd} before marking Read done.`);
+                    }
+                    return { type: action.type, name, done: action.done };
                 }
                 case "goal_add": {
                     const name = text("name", 60, true);
@@ -3122,6 +3136,7 @@
             case "habit_add": return `Add habit: ${action.name}`;
             case "habit_edit": return `Rename habit: ${action.oldName} → ${action.name}`;
             case "habit_remove": return `Remove habit and its linked goals: ${action.name}`;
+            case "habit_check": return `${action.done ? "Mark" : "Undo"} "${action.name}" ${action.done ? "done" : "as not done"} for today`;
             case "goal_add": return `Add goal: ${action.name} · ${action.habit === "*" ? "all habits" : action.habit} · ${action.target}%`;
             case "goal_edit": return `Edit goal: ${action.name} · ${action.habit === "*" ? "all habits" : action.habit} · ${action.target}%`;
             case "goal_remove": return `Remove goal: ${goals.find((goal) => goal.id === action.id).name}`;
@@ -3163,6 +3178,10 @@
                 delete habitStarts[action.name];
                 habits = habits.filter((habit) => habit !== action.name);
                 goals = goals.filter((goal) => goal.habit !== action.name);
+            } else if (action.type === "habit_check") {
+                const key = keyFor(todayUTC(), action.name);
+                if (action.done && action.name.toLowerCase() === "read" && !checks[key]) completeReadingGoal();
+                else checks[key] = action.done;
             } else if (action.type === "goal_add") {
                 goals.push({ id: `g-${assistantId()}`, name: action.name, habit: action.habit, target: action.target });
             } else if (action.type === "goal_edit") {
@@ -3330,7 +3349,21 @@
         reader.readAsText(file);
     }
 
-    function doLogout() {
+    async function doLogout() {
+        if (currentUser.provider === "google" && location.protocol !== "file:") {
+            try {
+                const response = await fetch("/api/auth/logout", {
+                    method: "POST",
+                    credentials: "same-origin",
+                    cache: "no-store"
+                });
+                if (!response.ok) throw new Error(`Logout failed (HTTP ${response.status}).`);
+            } catch (error) {
+                console.error("LifeTrack could not end the persistent Google session.", error);
+                toast("Could not securely sign out. Check your connection and try again.");
+                return;
+            }
+        }
         localStorage.removeItem("lifetrack-user");
         sessionStorage.removeItem("lifetrack-gtoken");
         sessionStorage.removeItem("lifetrack-drive-token");
@@ -3376,21 +3409,27 @@
                 <button type="button" role="menuitem" class="danger" data-act="logout">🚪 Log out</button>
             </div>`;
         profileMenu.hidden = false;
+        const viewportHeight = document.documentElement.clientHeight;
+        const viewportWidth = document.documentElement.clientWidth;
+        const edge = 12;
+        profileMenu.style.maxHeight = `${Math.max(80, viewportHeight - edge * 2)}px`;
         const r = opener.getBoundingClientRect();
         const w = profileMenu.offsetWidth;
+        const h = profileMenu.offsetHeight;
         let left;
         let top;
         if (opener === logoBtn) {
             left = r.right + 12;
-            top = Math.max(8, r.top);
+            top = Math.min(r.top, viewportHeight - h - edge);
         } else {
             left = r.right - w;
             top = r.bottom + 8;
+            if (top + h > viewportHeight - edge) top = r.top - h - 8;
         }
-        left = clamp(left, 8, window.innerWidth - w - 8);
-        const maxTop = window.innerHeight - profileMenu.offsetHeight - 8;
+        left = clamp(left, edge, Math.max(edge, viewportWidth - w - edge));
+        const maxTop = viewportHeight - h - edge;
         profileMenu.style.left = `${left}px`;
-        profileMenu.style.top = `${clamp(top, 8, Math.max(8, maxTop))}px`;
+        profileMenu.style.top = `${clamp(top, edge, Math.max(edge, maxTop))}px`;
         opener.setAttribute("aria-expanded", "true");
         const firstItem = profileMenu.querySelector("button");
         if (firstItem) firstItem.focus();
@@ -3493,35 +3532,80 @@
     document.getElementById("aiMic").addEventListener("click", () => {
         const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         const status = document.getElementById("aiVoiceStatus");
+        const micButton = document.getElementById("aiMic");
+        const setVoiceStatus = (message, isError = false) => {
+            status.textContent = message;
+            status.dataset.state = isError ? "error" : "info";
+        };
+        const secureOrigin = location.protocol === "https:" || location.hostname === "localhost";
+        if (!secureOrigin) {
+            setVoiceStatus("Voice input needs the hosted HTTPS page (or localhost) and microphone permission. Open the deployed LifeTrack page to use the mic.", true);
+            return;
+        }
         if (!Recognition) {
-            status.textContent = "Voice input is not supported in this browser. You can still type your message.";
+            setVoiceStatus("Voice input is not supported in this browser. Try Chrome or Edge, or type your message.", true);
             return;
         }
         if (aiRecognition) {
-            aiRecognition.stop();
-            aiRecognition = null;
+            try {
+                aiRecognition.stop();
+                setVoiceStatus("Stopping voice input…");
+            } catch (error) {
+                aiRecognition = null;
+                micButton.setAttribute("aria-pressed", "false");
+                micButton.title = "Voice input";
+                setVoiceStatus(`Could not stop voice input: ${error.message || error.name}.`, true);
+            }
             return;
         }
-        const recognition = new Recognition();
+        let recognition;
+        try {
+            recognition = new Recognition();
+        } catch (error) {
+            setVoiceStatus(`Could not start voice input: ${error.message || error.name}.`, true);
+            return;
+        }
         aiRecognition = recognition;
         const selectedVoiceLanguage = document.getElementById("aiVoiceLanguage").value;
         recognition.lang = selectedVoiceLanguage === "auto" ? navigator.language || "en-US" : selectedVoiceLanguage;
         recognition.interimResults = false;
         recognition.maxAlternatives = 1;
-        status.textContent = "Listening…";
+        setVoiceStatus("Listening…");
+        recognition.onstart = () => {
+            micButton.setAttribute("aria-pressed", "true");
+            micButton.title = "Stop voice input";
+            setVoiceStatus("Listening… tap the mic again to stop.");
+        };
         recognition.onresult = (event) => {
             const transcript = Array.from(event.results).map((result) => result[0].transcript).join(" ").trim();
             aiPrompt.value = [aiPrompt.value.trim(), transcript].filter(Boolean).join(" ");
             aiPrompt.focus();
-            status.textContent = transcript ? "Voice added to the message. Press Send when ready." : "No speech was detected.";
+            setVoiceStatus(transcript ? "Voice added to the message. Press Send when ready." : "No speech was detected.", !transcript);
         };
         recognition.onerror = (event) => {
-            status.textContent = event.error === "not-allowed"
-                ? "Microphone permission was denied. Enable it in your browser settings."
-                : `Voice input failed: ${event.error}. You can type your message instead.`;
+            const messages = {
+                "not-allowed": "Microphone access is blocked. Allow microphone permission for LifeTrack in your browser settings, then try again.",
+                "service-not-allowed": "The browser's speech service is blocked. Try Chrome or Edge on the hosted HTTPS LifeTrack page.",
+                "audio-capture": "No working microphone was found. Connect or enable a microphone, then try again.",
+                network: "The browser could not reach its speech service. Check your internet connection and try again.",
+                "no-speech": "No speech was detected. Check microphone permission and try speaking again."
+            };
+            setVoiceStatus(messages[event.error] || `Voice input failed (${event.error || "unknown error"}). You can type your message instead.`, true);
         };
-        recognition.onend = () => { aiRecognition = null; };
-        recognition.start();
+        recognition.onend = () => {
+            if (aiRecognition === recognition) aiRecognition = null;
+            micButton.setAttribute("aria-pressed", "false");
+            micButton.title = "Voice input";
+            if (status.textContent === "Stopping voice input…") setVoiceStatus("Voice input stopped.");
+        };
+        try {
+            recognition.start();
+        } catch (error) {
+            aiRecognition = null;
+            micButton.setAttribute("aria-pressed", "false");
+            micButton.title = "Voice input";
+            setVoiceStatus(`Could not start voice input: ${error.message || error.name}. Allow microphone permission and try again.`, true);
+        }
     });
     document.getElementById("aiSpeak").addEventListener("click", () => {
         const lastReply = aiConversation.slice().reverse().find((message) => message.role === "assistant");
@@ -3976,16 +4060,27 @@
         document.getElementById("anYear").hidden = analyticsView !== "year";
     });
 
-    // "live" fitness: refresh every minute while the tab is visible and Google is linked
-    setInterval(() => { if (document.visibilityState === "visible" && googleToken()) syncGoogle(); }, 60000);
+    async function resumeGoogleSync() {
+        try {
+            if (!await refreshPersistentGoogleSession()) return;
+            await syncCloud();
+            if (googleToken()) await syncGoogle();
+        } catch (error) {
+            console.error("LifeTrack could not resume Google sync.", error);
+            setFitStatus(`Google sync could not refresh: ${error.message}`, "warn");
+        }
+    }
+
+    // "live" fitness: renew the server-backed session as needed while the tab is active.
+    setInterval(() => {
+        if (document.visibilityState === "visible" && currentUser.provider === "google" && !driveToken()) resumeGoogleSync();
+    }, 60000);
     document.addEventListener("visibilitychange", () => {
         if (document.visibilityState !== "visible") return;
         if (!dailyTaskState || dailyTaskState.date !== isoFromUTC(todayUTC())) renderDailyTask();
         if (googleToken()) syncGoogle();
+        if (currentUser.provider === "google" && !driveToken()) resumeGoogleSync();
     });
-    if ((HEALTH_ON || currentUser.provider === "google") && location.protocol !== "file:") {
-        loadGIS().catch((error) => console.error("LifeTrack could not preload Google sign-in.", error));
-    }
 
     document.querySelectorAll(".sidebar .nav-item").forEach((button) => {
         button.addEventListener("click", () => {
@@ -4065,9 +4160,15 @@
 
     function setTheme(isDark) {
         document.body.classList.toggle("dark", isDark);
+        document.querySelector('meta[name="theme-color"]').content = isDark ? "#05070c" : "#e9edf4";
         themeToggle.setAttribute("aria-pressed", String(isDark));
         themeToggle.querySelector(".nav-icon").textContent = isDark ? "☀" : "🌙";
         themeToggle.querySelector(".nav-text").textContent = isDark ? "Light Mode" : "Dark Mode";
+        document.querySelectorAll("[data-theme-icon]").forEach((icon) => {
+            icon.media = icon.dataset.themeIcon === (isDark ? "dark" : "light") ? "all" : "not all";
+        });
+        document.querySelector('link[rel="manifest"]').href = isDark ? "manifest-dark.webmanifest" : "manifest.webmanifest";
+        document.querySelector('link[rel="apple-touch-icon"]').href = `lifetrack-logo${isDark ? "-dark" : ""}-192.png`;
         localStorage.setItem("lifetrack-theme", isDark ? "dark" : "light");
     }
 
@@ -4185,7 +4286,8 @@
     setLiveMonthAndYear();
     setTheme(localStorage.getItem("lifetrack-theme") === "dark");
     renderCalendar();
-    if (driveToken()) syncCloud().then(() => { if (googleToken()) syncGoogle(); });
+    if (currentUser.provider === "google") resumeGoogleSync();
+    else if (driveToken()) syncCloud().then(() => { if (googleToken()) syncGoogle(); });
     else if (googleToken()) syncGoogle();
     else if (currentUser.provider === "google") {
         setFitStatus("LifeTrack account is still signed in. Reconnect Google sync from the profile menu to access Drive again.", "warn");

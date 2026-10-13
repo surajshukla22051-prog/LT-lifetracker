@@ -1,16 +1,24 @@
 # LifeTrack
 
-A static LifeTrack habit-tracking dashboard.
+A LifeTrack habit-tracking dashboard served by Cloudflare Workers, with GitHub
+Pages kept as a redirect/entry point.
 
-## Run online with GitHub Pages
+## Publish LifeTrack
 
 1. Create or use the GitHub repository [LT-lifetracker](https://github.com/surajshukla22051-prog/LT-lifetracker).
-2. Upload all files in this folder to the repository root.
+2. Upload the app source files to the repository root. Do **not** upload
+   `files/client_secret_*.json`, `files/*.jks`, or `worker/.wrangler/`; keep
+   client secrets, signing keys, and local Cloudflare state private.
 3. In **Settings → Pages**, choose **Deploy from a branch**.
 4. Select the `main` branch and `/ (root)`, then save.
-5. Your site will be available at:
+5. The GitHub Pages URL stays as an entry point and redirects users to the
+   same-origin Cloudflare app required for persistent, secure Google sessions.
 
 [Open LifeTrack](https://surajshukla22051-prog.github.io/LT-lifetracker/)
+
+The primary app URL is `https://lifetrack-ai.surajshukla22051.workers.dev/`.
+Deploy the Worker and configure its secrets and auth KV namespace (instructions
+below) before enabling the redirect in `config.js`.
 
 The LifeTrack logo is configured as the site favicon, phone home-screen icon,
 and installable web-app icon through `manifest.webmanifest`.
@@ -19,7 +27,7 @@ and `terms.html`.
 
 ## Install LifeTrack as an app
 
-Deploy the site to GitHub Pages and open the HTTPS site once on each device.
+Deploy the Worker app and open its HTTPS URL once on each device.
 On Android, open Chrome's menu and choose **Install app** or **Add to Home
 screen**. On Windows, open the site in Chrome or Edge and choose **Install
 LifeTrack** from the address bar or browser menu. The service worker caches the
@@ -29,16 +37,19 @@ online.
 
 ## LifeTrack AI (Groq)
 
-The dashboard includes a blue bell assistant for text chat, optional browser
+The dashboard includes a logo-branded assistant for text chat, optional browser
 speech input/output, private notes, and review-before-save suggestions for
-habits, goals, Daily Body & Mind Plan preferences, and extra plan tasks. Notes and custom
+adding/editing/removing habits, marking or undoing today's check-ins, goals,
+Daily Body & Mind Plan preferences, and extra plan tasks. Voice input requires
+a supported browser on HTTPS (or localhost) with microphone permission. Notes and custom
 plan tasks are stored in this browser/account namespace and included in manual
 LifeTrack backup files; AI chat history stays in this browser and is not sent
 with backups. The assistant keeps up to 24 recent user/assistant exchanges in
 this browser and sends those recent messages with each prompt so it can follow
-up on earlier details. When you send a prompt, LifeTrack sends the recent chat, habit
-names, goal summary, a seven-day check-in count, and limited plan preferences
-to Groq through the Worker. It does not send body measurements or saved notes
+up on earlier details. When you send a prompt, LifeTrack sends the recent chat,
+habit names, each habit's today's done/undone status, goal summary, a seven-day
+check-in count, and limited plan preferences to Groq through the Worker. It does
+not send body measurements or saved notes
 as context. Avoid including sensitive health or personal information in chat.
 
 The Groq API key must stay in a server-side secret. To deploy the included
@@ -47,12 +58,42 @@ Cloudflare Worker:
 1. Install Node.js and sign in to a Cloudflare account.
 2. From the `worker` directory, run `npx wrangler login`.
 3. Edit `worker/wrangler.toml` and set `ALLOWED_ORIGINS` to the exact HTTPS
-   origin serving LifeTrack (for this GitHub Pages site, the origin has no
-   repository path).
-4. From the `worker` directory, deploy the Worker, then set the key as a
-   secret:
+   origins serving LifeTrack, including the Worker app origin.
+4. Create a separate KV namespace for OAuth sessions, then replace
+   `REPLACE_WITH_AUTH_KV_NAMESPACE_ID` in `wrangler.toml` with its ID:
 
    ```powershell
+   npx wrangler kv namespace create LIFETRACK_AUTH
+   ```
+
+5. Configure the Google OAuth Web application client. Register this exact
+   **Authorized redirect URI** in Google Cloud Console:
+
+   `https://lifetrack-ai.surajshukla22051.workers.dev/api/auth/google/callback`
+
+   Set the following Worker secrets (never add them to project files):
+
+   ```powershell
+   npx wrangler secret put GOOGLE_OAUTH_CLIENT_ID
+   npx wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET
+   npx wrangler secret put GOOGLE_TOKEN_ENCRYPTION_KEY
+   ```
+
+   Enter the existing Web application Client ID and its client secret when
+   prompted. Generate a separate random encryption key, for example:
+
+   ```powershell
+   node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+   ```
+
+   Keep the generated encryption key private and back it up securely; changing
+   it makes existing encrypted Google refresh tokens unreadable, so affected
+   users must reconnect.
+
+6. From the `worker` directory, build the public app assets and deploy:
+
+   ```powershell
+   node build-assets.mjs
    npx wrangler deploy
    npx wrangler secret put GROQ_API_KEY
    ```
@@ -60,8 +101,13 @@ Cloudflare Worker:
    Paste the key only into Wrangler's hidden prompt. Never add it to `config.js`,
    source code, or chat. The optional Worker variable `GROQ_MODEL` can select a
    Groq model; the configured default is `openai/gpt-oss-120b`.
-5. Copy the deployed Worker HTTPS URL into `GROQ_WORKER_URL` in `config.js`,
-   without adding `/api/assistant`, then publish the updated static site.
+7. Publish the updated project to GitHub Pages. `app-redirect.js` sends entry
+   point visits to the Worker app; the Worker serves the actual dashboard and
+   API from the same origin.
+
+Google's consent screen must be in **Production** for long-lived refresh tokens.
+In Testing mode Google can expire refresh tokens after seven days. Google may
+also require OAuth verification for the requested Drive and health scopes.
 
 The Worker only accepts requests from the configured origin, limits request
 size, and has a best-effort per-instance request throttle. Configure Cloudflare
@@ -93,21 +139,19 @@ schedule.
 
 ## Google Login
 
-The Google button on `index.html` signs in and requests Drive app-data access
-for cross-device LifeTrack backups. Enable the **Google Drive API** in the same
-Google Cloud project as the OAuth client, and allow the `drive.appdata` scope.
+The Google button on `index.html` uses the Cloudflare Worker authorization-code
+flow. Enable the **Google Drive API** in the same Google Cloud project as the
+OAuth client, and allow the `drive.appdata` scope.
 LifeTrack stores one private JSON file in the account's hidden Drive app-data
 folder; it is not visible in normal Drive listings.
 
-Use a Google OAuth **Web application** Client ID in:
+Use the Google OAuth **Web application** Client ID and secret as Worker secrets
+as described above. The public Client ID is also retained in:
 
 `config.js`
 
-and add this as an **Authorized JavaScript origin** in Google Cloud:
-
-`https://surajshukla22051-prog.github.io`
-
-Do not add `/LT-lifetracker/` to the authorized origin.
+The callback URL must match the **Authorized redirect URI** exactly. Google
+client secrets are server-only; never commit or publish them.
 
 Name/email login and Guest mode do not verify identity and remain local to the
 current browser/device. Signing in with the same typed email on another device
@@ -123,13 +167,14 @@ local app session lasts until you choose **Log out** or clear this site's
 browser data. The profile menu shows which account is remembered and offers
 **Switch account** and **Log out** actions.
 
-Google access tokens are short-lived and held only in temporary browser session
-storage; LifeTrack never stores your Google password or a refresh token in the
-browser. After a browser restart or token expiry, the LifeTrack account remains
-signed in, while Google Drive/health sync may pause. Use **Reconnect Google
-sync** in the profile menu to grant a fresh temporary token without signing
-into LifeTrack again. No OAuth client secret or refresh-token server is
-configured for this static GitHub Pages app.
+Google access tokens remain short-lived in browser session storage. A
+30-day, rolling, HttpOnly/Secure/SameSite cookie identifies the session, while
+the refresh token is encrypted with a separate Worker secret before storage in
+the private `LIFETRACK_AUTH` KV namespace. The app refreshes access tokens
+without prompting again; signing out revokes the LifeTrack session. Users can
+revoke LifeTrack's Google access at any time in Google Account security
+settings. Google can still invalidate a refresh token, and the user may then
+need to connect again.
 
 ## Fitness data sync
 
@@ -147,9 +192,10 @@ Health** there and complete setup with the same Google account. If prompted
 about a legacy Fitbit account, migrate it to that Google account, then choose
 **Retry sync**. For Google Fit mode, the legacy API must still be available to
 the project and account; it is deprecated and may stop working. Google access
-tokens are temporary and expire when a browser session ends. The LifeTrack
+tokens are short-lived and stored only for the current browser tab. The LifeTrack
 account stays signed in; use **Reconnect Google sync** in the dashboard profile
-menu to resume Drive and health syncing without returning to the login page.
+menu if Google revokes access. Ordinarily the Worker silently refreshes
+short-lived Google tokens using the encrypted server-side refresh token.
 Reconnecting requires the same Google account. Data availability depends on
 the account, connected devices, and recorded readings. Successfully imported
 health readings show **from Google**. The Sleep tile identifies Google-sourced
