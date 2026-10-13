@@ -117,6 +117,20 @@ other LifeTrack data through its private Drive app-data storage. Changes save
 automatically; an already-open device checks for updates once a minute and when
 you return to its tab.
 
+LifeTrack remembers the signed-in account name and email in this browser and
+opens the dashboard automatically after refreshes and browser restarts. This
+local app session lasts until you choose **Log out** or clear this site's
+browser data. The profile menu shows which account is remembered and offers
+**Switch account** and **Log out** actions.
+
+Google access tokens are short-lived and held only in temporary browser session
+storage; LifeTrack never stores your Google password or a refresh token in the
+browser. After a browser restart or token expiry, the LifeTrack account remains
+signed in, while Google Drive/health sync may pause. Use **Reconnect Google
+sync** in the profile menu to grant a fresh temporary token without signing
+into LifeTrack again. No OAuth client secret or refresh-token server is
+configured for this static GitHub Pages app.
+
 ## Fitness data sync
 
 LifeTrack can import steps and sleep from either Google Fit or Google Health.

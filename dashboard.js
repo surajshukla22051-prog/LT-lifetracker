@@ -1989,23 +1989,36 @@
     });
 
     let pendingTableHabitDrag = null;
+    function beginHabitDrag(drag, event, element, startOnTouch) {
+        if (!drag || !element || drag.started) return;
+        const shouldStart = !startOnTouch || Math.abs(event.clientX - drag.startX) > 8 || Math.abs(event.clientY - drag.startY) > 8;
+        if (!shouldStart) return;
+        drag.started = true;
+        element.classList.add("is-dragging");
+        element.setPointerCapture(event.pointerId);
+    }
+
     habitBody.addEventListener("pointerdown", (event) => {
         const cell = event.target.closest("td:first-child");
         if (!cell || event.button !== 0 || event.isPrimary === false) return;
         const index = Number(cell.dataset.habitIndex);
-        const drag = { pointerId: event.pointerId, from: index, to: index, cell, started: false, timer: 0 };
+        const row = cell.closest("tr");
+        const drag = { pointerId: event.pointerId, from: index, to: index, cell, row, started: false, timer: 0, startX: event.clientX, startY: event.clientY };
         pendingTableHabitDrag = drag;
+        if (event.pointerType === "touch" || event.pointerType === "pen") return;
         drag.timer = window.setTimeout(() => {
             if (pendingTableHabitDrag !== drag) return;
-            drag.started = true;
-            drag.cell.closest("tr").classList.add("is-dragging");
-            drag.cell.setPointerCapture(event.pointerId);
+            beginHabitDrag(drag, event, row, false);
         }, 280);
     });
 
     habitBody.addEventListener("pointermove", (event) => {
         const drag = pendingTableHabitDrag;
-        if (!drag || !drag.started || drag.pointerId !== event.pointerId) return;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        if (!drag.started) {
+            beginHabitDrag(drag, event, drag.row, true);
+            if (!drag.started) return;
+        }
         event.preventDefault();
         const target = document.elementFromPoint(event.clientX, event.clientY);
         const row = target && target.closest("#habitBody tr");
@@ -2325,6 +2338,69 @@
         } catch (e) { return null; }
     }
 
+    function reconnectGoogleSync() {
+        if (location.protocol === "file:") {
+            toast("Google sync can only reconnect from the hosted HTTPS LifeTrack site.");
+            return;
+        }
+        if (!/^[0-9]+-.+\.apps\.googleusercontent\.com$/.test(GID)) {
+            toast("Google sync is not configured. Check the OAuth Client ID in config.js.");
+            return;
+        }
+        const requestToken = () => {
+            const scopes = ["openid", "email", "profile", "https://www.googleapis.com/auth/drive.appdata"];
+            if (HEALTH_ON) scopes.push(...HEALTH_SCOPES.split(/\s+/).filter(Boolean));
+            const client = google.accounts.oauth2.initTokenClient({
+                client_id: GID,
+                scope: scopes.join(" "),
+                include_granted_scopes: false,
+                callback: async (response) => {
+                    if (response.error || !response.access_token) {
+                        toast(`Google sync could not reconnect${response.error ? ` (${response.error})` : ""}.`);
+                        return;
+                    }
+                    const grantedScopes = new Set(String(response.scope || scopes.join(" ")).split(/\s+/));
+                    if (!grantedScopes.has("https://www.googleapis.com/auth/drive.appdata")) {
+                        sessionStorage.removeItem("lifetrack-drive-token");
+                        sessionStorage.removeItem("lifetrack-gtoken");
+                        toast("Allow Google Drive app-data access to resume secure syncing.");
+                        return;
+                    }
+                    try {
+                        const expiry = Date.now() + (Number(response.expires_in || 3600) - 60) * 1000;
+                        sessionStorage.setItem("lifetrack-drive-token", JSON.stringify({ token: response.access_token, exp: expiry }));
+                        if (HEALTH_ON && HEALTH_SCOPES.split(/\s+/).every((scope) => grantedScopes.has(scope))) {
+                            sessionStorage.setItem("lifetrack-gtoken", JSON.stringify({
+                                token: response.access_token,
+                                exp: expiry,
+                                scopes: HEALTH_SCOPES
+                            }));
+                        } else {
+                            sessionStorage.removeItem("lifetrack-gtoken");
+                        }
+                    } catch (error) {
+                        console.error("LifeTrack could not save temporary Google authorization.", error);
+                        toast("Google authorization succeeded, but could not be saved for this session.");
+                        return;
+                    }
+                    toast("Google sync reconnected. Your LifeTrack account stayed signed in.");
+                    await syncCloud();
+                    if (googleToken()) syncGoogle();
+                },
+                error_callback: () => toast("The Google window was closed or blocked. Allow pop-ups and try again.")
+            });
+            client.requestAccessToken();
+        };
+        if (window.google && google.accounts && google.accounts.oauth2) {
+            requestToken();
+        } else {
+            loadGIS().then(requestToken).catch((error) => {
+                console.error("LifeTrack could not load Google sign-in.", error);
+                toast(`Google sign-in could not load: ${error.message}`);
+            });
+        }
+    }
+
     function scheduleCloudSync() {
         if (cloudApplying) return;
         const previousUpdatedAt = Number(localStorage.getItem(NS + "cloud-updated-at")) || 0;
@@ -2332,7 +2408,7 @@
         if (!driveToken()) {
             const status = document.getElementById("fitStatus");
             if (status && currentUser.provider === "google") {
-                status.textContent = "Google sign-in expired. Sign in again from the login page to sync new changes.";
+                status.textContent = "Google sync is paused; your LifeTrack account is still signed in. Reconnect Google sync from the profile menu.";
                 status.className = "fit-status warn";
             }
             return;
@@ -2360,13 +2436,13 @@
 
     async function driveRequest(url, options) {
         const token = driveToken();
-        if (!token) throw new Error("Google sign-in expired. Sign in with Google again to sync your data.");
+        if (!token) throw new Error("Google sync needs reconnecting. Your LifeTrack account is still signed in; choose Reconnect Google sync from the profile menu.");
         const response = await fetch(url, Object.assign({}, options, {
             headers: Object.assign({ Authorization: `Bearer ${token}` }, options && options.headers || {})
         }));
         if (response.status === 401) {
             sessionStorage.removeItem("lifetrack-drive-token");
-            throw new Error("Google sign-in expired. Sign in with Google again to sync your data.");
+            throw new Error("Google sync authorization expired. Your LifeTrack account is still signed in; choose Reconnect Google sync from the profile menu.");
         }
         if (!response.ok) throw new Error(`Google Drive sync failed (HTTP ${response.status}).`);
         return response;
@@ -2736,7 +2812,7 @@
             const accountNotLinked = /account[_ ]not[_ ]linked/i.test(e.message);
             if (accountNotLinked) sessionStorage.removeItem("lifetrack-gtoken");
             setFitStatus(e.message === "expired"
-                ? "Google session ended. Press Connect Google Health to link again."
+                ? "Google Health access expired. Your LifeTrack account is still signed in; reconnect Google sync from the profile menu."
                 : accountNotLinked
                     ? "Open Google Health on this same Google account, finish linking it, then connect again."
                     : `Google sync failed: ${e.message}`, "bad");
@@ -2792,6 +2868,43 @@
             paintUser();
             closeModal();
             toast("Profile saved.");
+        });
+    }
+
+    function openFeedbackModal() {
+        const entry = (() => {
+            try {
+                return JSON.parse(store.get("user-feedback") || "null") || {};
+            } catch (error) {
+                return {};
+            }
+        })();
+        const selected = Number(entry.rating) || 0;
+        const modal = openModal(`<h3>Feedback</h3>
+            <div class="feedback-stars modal-feedback-stars" aria-label="Rate your experience">
+                ${[1, 2, 3, 4, 5].map((rating) => `<button type="button" class="feedback-star ${rating <= selected ? "active" : ""}" data-rating="${rating}" aria-label="${rating} star" aria-pressed="${rating <= selected}">★</button>`).join("")}
+            </div>
+            <label class="modal-label" for="feedbackText">Tell us what you liked or what to improve</label>
+            <textarea id="feedbackText" rows="5" placeholder="The tracker feels helpful, but I’d love a smarter habit filter.">${esc((typeof entry.message === "string" ? entry.message : "") || "")}</textarea>
+            <div class="modal-actions"><button type="button" class="secondary-button" data-cancel>Cancel</button><button type="button" class="primary-button" id="feedbackSave">Save feedback</button></div>`);
+        const stars = Array.from(modal.querySelectorAll(".feedback-star"));
+        let rating = selected;
+        stars.forEach((star) => {
+            star.addEventListener("click", () => {
+                rating = Number(star.dataset.rating || 0);
+                stars.forEach((item) => {
+                    const active = Number(item.dataset.rating || 0) <= rating;
+                    item.classList.toggle("active", active);
+                    item.setAttribute("aria-pressed", String(active));
+                });
+            });
+        });
+        modal.querySelector("#feedbackSave").addEventListener("click", () => {
+            const text = modal.querySelector("#feedbackText").value.trim();
+            const payload = { rating: rating || null, message: text, updatedAt: new Date().toISOString() };
+            store.set("user-feedback", JSON.stringify(payload));
+            closeModal();
+            toast(rating ? "Thanks for the feedback." : "Feedback saved.");
         });
     }
 
@@ -3241,7 +3354,7 @@
         const isGoogle = currentUser.provider === "google";
         const isDark = document.body.classList.contains("dark");
         const avatar = currentUser.picture ? `<img alt="" referrerpolicy="no-referrer" src="${esc(currentUser.picture)}">` : esc((Array.from(currentUser.name.trim())[0] || "U").toUpperCase());
-        profileMenu.innerHTML = `<div class="pm-head"><span class="profile pm-avatar">${avatar}</span><div><strong>${esc(currentUser.name)}</strong><small>${esc(currentUser.email || (currentUser.name === "Guest" ? "Guest, data stays on this device" : "No email added"))}</small>${isGoogle ? `<span class="chip">Signed in with Google</span>` : ""}</div></div>
+        profileMenu.innerHTML = `<div class="pm-head"><span class="profile pm-avatar">${avatar}</span><div><strong>${esc(currentUser.name)}</strong><small>${esc(currentUser.email || (currentUser.name === "Guest" ? "Guest, data stays on this device" : "No email added"))}</small><span class="chip">${isGoogle ? "Google account remembered on this device" : "Account remembered on this device"}</span></div></div>
             <div class="pm-list" role="none">
                 <button type="button" role="menuitem" data-act="section" data-section="dashboard">📊 Dashboard</button>
                 <button type="button" role="menuitem" data-act="section" data-section="habits">✓ Habits</button>
@@ -3252,12 +3365,14 @@
                 <hr>
                 <button type="button" role="menuitem" data-act="edit">✏️ Edit profile</button>
                 <button type="button" role="menuitem" data-act="body">⚖️ Body profile</button>
-                ${currentUser.provider === "google" ? `<span class="chip">Google Drive data sync</span><button type="button" role="menuitem" data-act="reauth">🔄 Sign in again for sync</button>` : ""}
+                <button type="button" role="menuitem" data-act="feedback">💬 Feedback</button>
+                ${currentUser.provider === "google" ? `<span class="chip">${linked ? "Google sync ready for this session" : "Google sync paused; account still signed in"}</span><button type="button" role="menuitem" data-act="reauth">🔄 Reconnect Google sync</button>` : ""}
                 <hr>
-                <button type="button" role="menuitem" data-act="export">⬇️ Download backup</button>
-                <button type="button" role="menuitem" data-act="import">⬆️ Restore backup</button>
+                <button type="button" role="menuitem" data-act="extract">⬇️ Extract data</button>
+                <button type="button" role="menuitem" data-act="merge">⬆️ Merge data</button>
                 <button type="button" role="menuitem" class="danger" data-act="reset">🗑️ Delete all my data</button>
                 <hr>
+                <button type="button" role="menuitem" data-act="switch-account">🔁 Switch account</button>
                 <button type="button" role="menuitem" class="danger" data-act="logout">🚪 Log out</button>
             </div>`;
         profileMenu.hidden = false;
@@ -3308,15 +3423,17 @@
         if (act === "section") navigateToSection(b.dataset.section);
         else if (act === "theme") setTheme(!document.body.classList.contains("dark"));
         else if (act === "edit") openProfileEditor();
+        else if (act === "feedback") openFeedbackModal();
         else if (act === "body") {
             navigateToSection("dashboard");
             editingBody = true;
             renderDailyReminder(lastLife || computeLifetime());
             dailyReminder.scrollIntoView({ behavior: "smooth", block: "center" });
         } else if (act === "gsync") syncGoogle();
-        else if (act === "reauth") window.location.href = "index.html";
-        else if (act === "export") exportData();
-        else if (act === "import") document.getElementById("importFile").click();
+        else if (act === "reauth") reconnectGoogleSync();
+        else if (act === "switch-account") window.location.href = "index.html?forceLogin=1";
+        else if (act === "extract") exportData();
+        else if (act === "merge") document.getElementById("importFile").click();
         else if (act === "reset") {
             confirmModal("Delete all your data?", "This removes your habits, check-ins, goals, reading progress, body profile, fitness log, AI notes, reminders and custom plan tasks from this browser and removes its background reminder schedule. Download a backup first if you might want them back.", "Delete everything", async () => {
                 try {
@@ -3765,21 +3882,24 @@
     let pendingHabitDrag = null;
     habitManageList.addEventListener("pointerdown", (event) => {
         const card = event.target.closest(".habit-card");
-        if (!card || event.target.closest("button, input") || event.button !== 0 || event.isPrimary === false) return;
+        if (!card || !event.target.closest(".habit-card header") || event.target.closest("button, input") || event.button !== 0 || event.isPrimary === false) return;
         const index = Number(card.dataset.habitIndex);
-        const drag = { pointerId: event.pointerId, from: index, to: index, card, started: false, timer: 0 };
+        const drag = { pointerId: event.pointerId, from: index, to: index, card, started: false, timer: 0, startX: event.clientX, startY: event.clientY };
         pendingHabitDrag = drag;
+        if (event.pointerType === "touch" || event.pointerType === "pen") return;
         drag.timer = window.setTimeout(() => {
             if (pendingHabitDrag !== drag) return;
-            drag.started = true;
-            drag.card.classList.add("is-dragging");
-            drag.card.setPointerCapture(event.pointerId);
+            beginHabitDrag(drag, event, card, false);
         }, 280);
     });
 
     habitManageList.addEventListener("pointermove", (event) => {
         const drag = pendingHabitDrag;
-        if (!drag || !drag.started || drag.pointerId !== event.pointerId) return;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        if (!drag.started) {
+            beginHabitDrag(drag, event, drag.card, true);
+            if (!drag.started) return;
+        }
         event.preventDefault();
         const target = document.elementFromPoint(event.clientX, event.clientY);
         const card = target && target.closest(".habit-card");
@@ -3863,7 +3983,9 @@
         if (!dailyTaskState || dailyTaskState.date !== isoFromUTC(todayUTC())) renderDailyTask();
         if (googleToken()) syncGoogle();
     });
-    if (HEALTH_ON && location.protocol !== "file:") loadGIS().catch(() => {});
+    if ((HEALTH_ON || currentUser.provider === "google") && location.protocol !== "file:") {
+        loadGIS().catch((error) => console.error("LifeTrack could not preload Google sign-in.", error));
+    }
 
     document.querySelectorAll(".sidebar .nav-item").forEach((button) => {
         button.addEventListener("click", () => {
@@ -4065,5 +4187,8 @@
     renderCalendar();
     if (driveToken()) syncCloud().then(() => { if (googleToken()) syncGoogle(); });
     else if (googleToken()) syncGoogle();
+    else if (currentUser.provider === "google") {
+        setFitStatus("LifeTrack account is still signed in. Reconnect Google sync from the profile menu to access Drive again.", "warn");
+    }
 
 })();

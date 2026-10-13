@@ -101,8 +101,13 @@
     themeBtn.addEventListener("click", () => setTheme(!document.body.classList.contains("dark")));
     setTheme(localStorage.getItem("lifetrack-theme") === "dark");
 
-    // ---- already logged in? let them jump back in, but don't force it ----
+    // ---- if a Google/local account is already remembered, skip the login page on open ----
     const existingUser = JSON.parse(localStorage.getItem("lifetrack-user") || "null");
+    const forceLogin = new URLSearchParams(window.location.search).has("forceLogin");
+    if (existingUser && existingUser.name && !forceLogin) {
+        window.location.replace("dashboard.html");
+        return;
+    }
     if (existingUser && existingUser.name) {
         const banner = document.getElementById("authBanner");
         banner.textContent = "";
@@ -112,7 +117,11 @@
         link.href = "dashboard.html";
         link.textContent = "go to Dashboard";
         link.style.cssText = "color:var(--primary-strong); font-weight:700;";
-        banner.append("Logged in as ", strong, " — ", link, ", or log in below as someone else.");
+        const other = document.createElement("a");
+        other.href = "index.html?forceLogin=1";
+        other.textContent = "log in as someone else";
+        other.style.cssText = "color:var(--primary-strong); font-weight:700;";
+        banner.append("Logged in as ", strong, " — ", link, ", or ", other, ".");
         banner.style.display = "block";
     }
 
@@ -148,7 +157,7 @@
     // uid decides which private data slot this person gets in this browser
     function login(name, email, extra) {
         const cleanName = name.trim();
-        const user = Object.assign({ name: cleanName, email: email.trim() }, extra || {});
+        const user = Object.assign({ name: cleanName, email: email.trim(), provider: "local" }, extra || {});
         if (user.provider !== "google") {
             sessionStorage.removeItem("lifetrack-drive-token");
             sessionStorage.removeItem("lifetrack-gtoken");
@@ -261,7 +270,7 @@
             },
             error_callback: () => showError("The Google window was closed or blocked. Allow pop-ups for this site and try again.")
         });
-        client.requestAccessToken({ prompt: "select_account" });
+        client.requestAccessToken();
     });
 })();
 </script>
