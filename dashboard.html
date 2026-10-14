@@ -4,27 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>LifeTrack Dashboard</title>
-    <meta name="theme-color" content="#0b1730">
+    <meta name="theme-color" content="#05070c">
+    <script src="config.js"></script>
+    <script src="app-redirect.js"></script>
     <link rel="apple-touch-icon" href="lifetrack-logo-192.png">
     <link rel="manifest" href="manifest.webmanifest">
     <script src="pwa.js" defer></script>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%233b82f6'/%3E%3Cstop offset='1' stop-color='%230891b2'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='38' font-family='Arial,sans-serif' font-weight='800' font-size='26' letter-spacing='-1' text-anchor='middle' fill='%23ffffff'%3ELT%3C/text%3E%3Crect x='14' y='49' width='8' height='6' rx='1.5' fill='%23bfe3ff'/%3E%3Crect x='28' y='44' width='8' height='11' rx='1.5' fill='%23bfe3ff'/%3E%3Crect x='42' y='38' width='8' height='17' rx='1.5' fill='%23eafcff'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="dashboard.css?v=16">
-    <link rel="icon" type="image/png" href="lifetrack-logo.png" sizes="120x120">
+    <link rel="icon" type="image/png" href="lifetrack-logo.png" sizes="120x120" media="(prefers-color-scheme: light)" data-theme-icon="light">
+    <link rel="icon" type="image/png" href="lifetrack-logo-dark.png" sizes="120x120" media="(prefers-color-scheme: dark)" data-theme-icon="dark">
+    <link rel="stylesheet" href="dashboard.css?v=21">
 </head>
 <body>
 <div class="app">
     <aside class="sidebar" aria-label="Main navigation">
         <div class="logo" id="logoArea">
             <button type="button" class="logo-btn" id="logoBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="profileMenu" title="Profile &amp; account">
-                <span class="logo-box"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LifeTrack logo">
-                    <text x="50" y="56" text-anchor="middle" font-family="Arial, 'Segoe UI', sans-serif" font-weight="800" font-size="44" letter-spacing="-3" fill="#ffffff">LT</text>
-                    <g opacity="0.92">
-                        <rect x="24" y="80" width="11" height="9" rx="2" fill="#bfe3ff"/>
-                        <rect x="44.5" y="73" width="11" height="16" rx="2" fill="#bfe3ff"/>
-                        <rect x="65" y="64" width="11" height="25" rx="2" fill="#eafcff"/>
-                    </g>
-                </svg></span>
+                <span class="logo-box"><img class="logo-image-light" src="lifetrack-logo.png" alt="LifeTrack logo"><img class="logo-image-dark" src="lifetrack-logo-dark.png" alt=""></span>
             </button>
             <div class="logo-text"><h2>LifeTrack</h2><p>Build your life.</p></div>
         </div>
@@ -33,7 +28,6 @@
             <button type="button" class="nav-item" data-section="habits" title="Habits"><span class="nav-icon">✓</span><span class="nav-text">Habits</span></button>
             <button type="button" class="nav-item" data-section="goals" title="Goals"><span class="nav-icon">🎯</span><span class="nav-text">Goals</span></button>
             <button type="button" class="nav-item" data-section="analytics" title="Analytics"><span class="nav-icon">📈</span><span class="nav-text">Analytics</span></button>
-            <button type="button" class="nav-item" data-section="tasks" title="Task"><span class="nav-icon">⚡</span><span class="nav-text">Task</span></button>
         </nav>
         <div class="sidebar-bottom">
             <div class="quote-box"><small>DAILY REMINDER</small><p>Small actions make a big difference.<br>Compounded daily.</p></div>
@@ -194,6 +188,7 @@
                     <div class="panel-header"><div><span class="eyebrow">REWARDS</span><h2>Achievements</h2></div></div>
                     <div id="badgeGrid" class="badge-grid"></div>
                 </div>
+
             </div>
         </section>
 
@@ -307,12 +302,14 @@
 
 <div id="profileMenu" class="profile-menu" role="menu" hidden></div>
 <button type="button" id="aiLauncher" class="ai-launcher" aria-label="Open LifeTrack AI assistant" aria-expanded="false" aria-controls="aiPanel" title="LifeTrack AI assistant">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4M12 3V1"/></svg>
+    <img class="logo-image-light" src="lifetrack-logo.png" alt="">
+    <img class="logo-image-dark" src="lifetrack-logo-dark.png" alt="">
 </button>
 <section id="aiPanel" class="ai-panel" role="dialog" aria-label="LifeTrack AI assistant" aria-modal="false" hidden>
     <header class="ai-header">
         <span class="ai-brand-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4M12 3V1"/></svg>
+            <img class="logo-image-light" src="lifetrack-logo.png" alt="">
+            <img class="logo-image-dark" src="lifetrack-logo-dark.png" alt="">
         </span>
         <div><strong>LifeTrack AI</strong><small>Habits · goals · daily plan</small></div>
         <button type="button" class="ai-close" id="aiClose" aria-label="Close AI assistant">×</button>
@@ -329,7 +326,7 @@
         <form id="aiChatForm" class="ai-compose">
             <textarea id="aiPrompt" rows="2" maxlength="1200" placeholder="Ask about your habits or goals… (Enter to send)" aria-label="Message the AI assistant"></textarea>
             <div class="ai-compose-actions">
-                <button type="button" id="aiMic" class="ai-icon-button" aria-label="Speak your message" title="Voice input">🎙</button>
+                <button type="button" id="aiMic" class="ai-icon-button" aria-label="Speak your message" aria-pressed="false" title="Voice input">🎙</button>
                 <button type="button" id="aiSpeak" class="ai-icon-button" aria-label="Read the latest reply aloud" title="Read aloud">🔊</button>
                 <select id="aiVoiceLanguage" class="ai-voice-language" aria-label="Voice language"><option value="auto">Auto</option><option value="hi-IN">हिन्दी</option><option value="en-US">English</option></select>
                 <button type="submit" id="aiSend" class="ai-send">Send</button>
@@ -368,8 +365,7 @@
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <input type="file" id="importFile" accept="application/json,.json" hidden>
 
-<script src="config.js"></script>
-<script src="dashboard.js?v=22"></script>
+<script src="dashboard.js?v=27"></script>
 
 <footer class="lt-footer"><span><a class="footer-privacy" href="privacy.html" aria-label="Privacy policy">© <strong>LT Series</strong></a> | <a class="footer-privacy" href="terms.html">Terms of Service</a> | <span class="footer-credit">Made by Suraj Shukla</span></span></footer>
 </body>

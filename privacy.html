@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#eef3ff">
+    <meta name="theme-color" content="#e9edf4">
     <title>Privacy Policy · LifeTrack</title>
-    <link rel="icon" type="image/png" href="lifetrack-logo.png">
+    <link rel="icon" type="image/png" href="lifetrack-logo.png" media="(prefers-color-scheme: light)">
+    <link rel="icon" type="image/png" href="lifetrack-logo-dark.png" media="(prefers-color-scheme: dark)">
     <link rel="apple-touch-icon" href="lifetrack-logo-192.png">
     <link rel="stylesheet" href="dashboard.css">
     <style>
@@ -77,7 +78,7 @@
 
             <section>
                 <h2>Tokens and permissions</h2>
-                <p>Google access tokens are held in temporary browser session storage and expire. Your LifeTrack account remains signed in, and you can reconnect Google from the dashboard profile menu. You can stop future Google access through your Google Account security settings. Information already stored in this browser or in Google Drive may need to be removed separately.</p>
+                <p>Your LifeTrack account name, email, and account identifier are remembered in this browser until you log out or clear this site's browser data. Short-lived Google access tokens are held in temporary browser session storage. To refresh them without repeated sign-in, LifeTrack stores a refresh token encrypted in its private Cloudflare Worker KV namespace and uses a Secure, HttpOnly, SameSite cookie for a rolling 30-day session. LifeTrack does not store your Google password or expose the refresh token to browser code. You can stop future Google access through your Google Account security settings. Information already stored in this browser or in Google Drive may need to be removed separately.</p>
             </section>
 
             <section>
