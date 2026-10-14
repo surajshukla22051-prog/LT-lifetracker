@@ -4167,8 +4167,6 @@
         document.querySelectorAll("[data-theme-icon]").forEach((icon) => {
             icon.media = icon.dataset.themeIcon === (isDark ? "dark" : "light") ? "all" : "not all";
         });
-        document.querySelector('link[rel="manifest"]').href = isDark ? "manifest-dark.webmanifest" : "manifest.webmanifest";
-        document.querySelector('link[rel="apple-touch-icon"]').href = `lifetrack-logo${isDark ? "-dark" : ""}-192.png`;
         localStorage.setItem("lifetrack-theme", isDark ? "dark" : "light");
     }
 
