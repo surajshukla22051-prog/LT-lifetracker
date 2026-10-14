@@ -1,24 +1,19 @@
-const CACHE_NAME = "lifetrack-shell-v20";
+const CACHE_NAME = "lifetrack-shell-v13";
 const APP_SHELL = [
     "./",
     "./index.html",
     "./dashboard.html",
-    "./dashboard.css?v=21",
+    "./dashboard.css?v=16",
     "./auth.css",
-    "./dashboard.js?v=27",
+    "./dashboard.js?v=22",
     "./pwa.js",
     "./config.js",
-    "./app-redirect.js",
     "./manifest.webmanifest",
-    "./manifest-dark.webmanifest",
     "./privacy.html",
     "./terms.html",
     "./lifetrack-logo.png",
-    "./lifetrack-logo-dark.png",
     "./lifetrack-logo-192.png",
-    "./lifetrack-logo-512.png",
-    "./lifetrack-logo-dark-192.png",
-    "./lifetrack-logo-dark-512.png"
+    "./lifetrack-logo-512.png"
 ];
 
 self.addEventListener("install", (event) => {
@@ -89,7 +84,6 @@ self.addEventListener("fetch", (event) => {
     const request = event.request;
     const url = new URL(request.url);
     if (request.method !== "GET" || url.origin !== self.location.origin) return;
-    if (url.pathname.startsWith("/api/auth/")) return;
 
     event.respondWith((async () => {
         try {

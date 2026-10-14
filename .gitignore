@@ -3,7 +3,3 @@
 Thumbs.db
 .vscode/
 .idea/
-/worker/public/
-/worker/.wrangler/
-/files/client_secret_*.json
-/files/*.jks

@@ -6,13 +6,10 @@
     <title>LifeTrack · Habit and Wellness Tracker</title>
     <meta name="description" content="LifeTrack helps you track daily habits, goals, reading, focus, and wellness progress, with optional Google Drive sync and read-only Google Fit or Google Health summaries.">
     <meta name="google-site-verification" content="VUvUIpObcq8B8fJxpyTdOtFRyDV-gneoDYOLW3EzlEM">
-    <meta name="theme-color" content="#e9edf4">
-    <link rel="icon" type="image/png" href="lifetrack-logo.png" media="(prefers-color-scheme: light)" data-theme-icon="light">
-    <link rel="icon" type="image/png" href="lifetrack-logo-dark.png" media="(prefers-color-scheme: dark)" data-theme-icon="dark">
+    <meta name="theme-color" content="#eef3ff">
+    <link rel="icon" type="image/png" href="lifetrack-logo.png">
     <link rel="apple-touch-icon" href="lifetrack-logo-192.png">
     <link rel="manifest" href="manifest.webmanifest">
-    <script src="config.js"></script>
-    <script src="app-redirect.js"></script>
     <script src="pwa.js" defer></script>
     <link rel="stylesheet" href="dashboard.css">
     <link rel="stylesheet" href="auth.css">
@@ -24,8 +21,14 @@
     <main class="auth-card">
         <div class="auth-logo">
             <div class="logo-box">
-                <img class="logo-image-light" src="lifetrack-logo.png" alt="LifeTrack logo">
-                <img class="logo-image-dark" src="lifetrack-logo-dark.png" alt="">
+                <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LifeTrack logo">
+                    <text x="50" y="56" text-anchor="middle" font-family="Arial, 'Segoe UI', sans-serif" font-weight="800" font-size="44" letter-spacing="-3" fill="#ffffff">LT</text>
+                    <g opacity="0.92">
+                        <rect x="24" y="80" width="11" height="9" rx="2" fill="#bfe3ff"/>
+                        <rect x="44.5" y="73" width="11" height="16" rx="2" fill="#bfe3ff"/>
+                        <rect x="65" y="64" width="11" height="25" rx="2" fill="#eafcff"/>
+                    </g>
+                </svg>
             </div>
             <div>
                 <h1>LifeTrack</h1>
@@ -82,66 +85,24 @@
         <a href="terms.html">Terms of Service</a>
     </footer>
 
+<script src="config.js"></script>
 <script>
 (function () {
     "use strict";
-    if (window.LT_REDIRECTING) return;
 
     // ---- theme (shared "lifetrack-theme" key with the dashboard) ----
     const themeBtn = document.getElementById("authThemeToggle");
 
     function setTheme(isDark) {
         document.body.classList.toggle("dark", isDark);
-        document.querySelector('meta[name="theme-color"]').content = isDark ? "#05070c" : "#e9edf4";
         themeBtn.textContent = isDark ? "☀" : "🌙";
-        document.querySelectorAll("[data-theme-icon]").forEach((icon) => {
-            icon.media = icon.dataset.themeIcon === (isDark ? "dark" : "light") ? "all" : "not all";
-        });
         localStorage.setItem("lifetrack-theme", isDark ? "dark" : "light");
     }
     themeBtn.addEventListener("click", () => setTheme(!document.body.classList.contains("dark")));
     setTheme(localStorage.getItem("lifetrack-theme") === "dark");
 
-    const callbackError = document.getElementById("authError");
-    const authQuery = new URLSearchParams(window.location.search);
-    const googleErrors = {
-        state: "Google sign-in could not be verified. Please try again.",
-        expired_state: "Google sign-in timed out. Please try again.",
-        refresh_token: "Google did not provide ongoing access. Please sign in again and approve the requested access.",
-        drive_scope: "Allow Google Drive app-data access to enable secure syncing.",
-        authorization: "Google sign-in could not be completed. Check Worker and OAuth configuration, then try again."
-    };
-    if (authQuery.has("googleError")) {
-        callbackError.textContent = googleErrors[authQuery.get("googleError")] || "Google sign-in could not be completed. Please try again.";
-        callbackError.classList.add("show");
-    }
-    if (authQuery.get("google") === "connected") {
-        fetch("/api/auth/session", { credentials: "same-origin", cache: "no-store" })
-            .then(async (response) => {
-                if (!response.ok) throw new Error(`Session setup failed (HTTP ${response.status}).`);
-                const session = await response.json();
-                if (!session.user || session.user.provider !== "google" || !session.user.uid) {
-                    throw new Error("Google did not return a valid LifeTrack account.");
-                }
-                localStorage.setItem("lifetrack-user", JSON.stringify(session.user));
-                localStorage.setItem("lifetrack-remember-name", session.user.name);
-                window.location.replace("dashboard.html");
-            })
-            .catch((error) => {
-                console.error("LifeTrack could not finish Google sign-in.", error);
-                callbackError.textContent = "Google connected, but LifeTrack could not restore the session. Please try again.";
-                callbackError.classList.add("show");
-            });
-        return;
-    }
-
-    // ---- if a Google/local account is already remembered, skip the login page on open ----
+    // ---- already logged in? let them jump back in, but don't force it ----
     const existingUser = JSON.parse(localStorage.getItem("lifetrack-user") || "null");
-    const forceLogin = new URLSearchParams(window.location.search).has("forceLogin");
-    if (existingUser && existingUser.name && !forceLogin && !authQuery.has("googleError")) {
-        window.location.replace("dashboard.html");
-        return;
-    }
     if (existingUser && existingUser.name) {
         const banner = document.getElementById("authBanner");
         banner.textContent = "";
@@ -151,11 +112,7 @@
         link.href = "dashboard.html";
         link.textContent = "go to Dashboard";
         link.style.cssText = "color:var(--primary-strong); font-weight:700;";
-        const other = document.createElement("a");
-        other.href = "index.html?forceLogin=1";
-        other.textContent = "log in as someone else";
-        other.style.cssText = "color:var(--primary-strong); font-weight:700;";
-        banner.append("Logged in as ", strong, " — ", link, ", or ", other, ".");
+        banner.append("Logged in as ", strong, " — ", link, ", or log in below as someone else.");
         banner.style.display = "block";
     }
 
@@ -191,7 +148,7 @@
     // uid decides which private data slot this person gets in this browser
     function login(name, email, extra) {
         const cleanName = name.trim();
-        const user = Object.assign({ name: cleanName, email: email.trim(), provider: "local" }, extra || {});
+        const user = Object.assign({ name: cleanName, email: email.trim() }, extra || {});
         if (user.provider !== "google") {
             sessionStorage.removeItem("lifetrack-drive-token");
             sessionStorage.removeItem("lifetrack-gtoken");
@@ -225,9 +182,18 @@
         login("Guest", "", { uid: "guest" });
     });
 
-    // ---- Google sign-in starts the same-origin Worker OAuth flow ----
+    // ---- Google sign-in (Client ID lives in config.js, users never see it) ----
     const CFG = window.LT_CONFIG || {};
     const GID = CFG.GOOGLE_CLIENT_ID || "";
+    const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+    const HEALTH_SCOPES = Boolean(CFG.GOOGLE_FIT) ? [
+        "https://www.googleapis.com/auth/fitness.activity.read",
+        "https://www.googleapis.com/auth/fitness.sleep.read"
+    ] : Boolean(CFG.GOOGLE_HEALTH) ? [
+        "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
+        "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
+    ] : [];
+    const LOGIN_SCOPES = ["openid", "email", "profile", DRIVE_SCOPE, ...HEALTH_SCOPES];
     const gReady = /^[0-9]+-.+\.apps\.googleusercontent\.com$/.test(GID);
 
     function showError(text) {
@@ -235,8 +201,22 @@
         errorBox.classList.add("show");
     }
 
-    document.getElementById("googleBtn").addEventListener("click", (event) => {
-        event.preventDefault();
+    function loadGIS() {
+        return new Promise((resolve, reject) => {
+            if (window.google && google.accounts && google.accounts.oauth2) { resolve(); return; }
+            const s = document.createElement("script");
+            s.src = "https://accounts.google.com/gsi/client";
+            s.async = true;
+            s.onload = () => resolve();
+            s.onerror = () => reject(new Error("Could not load Google sign-in. Check your internet connection."));
+            document.head.appendChild(s);
+        });
+    }
+
+    // preload so the Google window opens instantly on tap (needed on phones)
+    if (gReady && location.protocol !== "file:") loadGIS().catch(() => {});
+
+    document.getElementById("googleBtn").addEventListener("click", async () => {
         if (location.protocol === "file:") {
             showError("Google login works on the online website, not from a file on your computer.");
             return;
@@ -245,9 +225,44 @@
             showError("Google login is not set up yet. (Site owner: add the Client ID in config.js.)");
             return;
         }
-        window.location.assign("/api/auth/google/start?returnTo=index.html");
+        try { await loadGIS(); } catch (e) { showError(e.message); return; }
+        const client = google.accounts.oauth2.initTokenClient({
+            client_id: GID,
+            scope: LOGIN_SCOPES.join(" "),
+            include_granted_scopes: false,
+            callback: async (resp) => {
+                if (resp.error) { showError(`Google sign-in was cancelled or blocked (${resp.error}).`); return; }
+                try {
+                    const grantedScopes = new Set(String(resp.scope || LOGIN_SCOPES.join(" ")).split(/\s+/));
+                    if (!grantedScopes.has(DRIVE_SCOPE)) {
+                        sessionStorage.removeItem("lifetrack-drive-token");
+                        sessionStorage.removeItem("lifetrack-gtoken");
+                        showError("Allow Google Drive app-data access to enable secure syncing across your devices.");
+                        return;
+                    }
+                    const expiry = Date.now() + (Number(resp.expires_in || 3600) - 60) * 1000;
+                    sessionStorage.setItem("lifetrack-drive-token", JSON.stringify({ token: resp.access_token, exp: expiry }));
+                    if (HEALTH_SCOPES.length && HEALTH_SCOPES.every((scope) => grantedScopes.has(scope))) {
+                        sessionStorage.setItem("lifetrack-gtoken", JSON.stringify({ token: resp.access_token, exp: expiry, scopes: HEALTH_SCOPES.join(" ") }));
+                    } else {
+                        sessionStorage.removeItem("lifetrack-gtoken");
+                    }
+                    const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${resp.access_token}` } });
+                    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                    const u = await r.json();
+                    login(u.name || u.email || "Google user", u.email || "", {
+                        uid: "g_" + (u.sub || u.email),
+                        picture: u.picture || "",
+                        provider: "google"
+                    });
+                } catch (e) {
+                    showError(`Signed in, but Google would not share your profile (${e.message}).`);
+                }
+            },
+            error_callback: () => showError("The Google window was closed or blocked. Allow pop-ups for this site and try again.")
+        });
+        client.requestAccessToken({ prompt: "select_account" });
     });
-
 })();
 </script>
 </body>

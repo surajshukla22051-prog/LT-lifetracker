@@ -1,7 +1,7 @@
 (function () {
     "use strict";
 
-    if (window.LT_REDIRECTING || !("serviceWorker" in navigator) || location.protocol === "file:") return;
+    if (!("serviceWorker" in navigator) || location.protocol === "file:") return;
 
     window.addEventListener("load", () => {
         navigator.serviceWorker.register("./service-worker.js", { scope: "./" })
