@@ -14,7 +14,7 @@ Pages kept as a redirect/entry point.
 5. The GitHub Pages URL stays as an entry point and redirects users to the
    same-origin Cloudflare app required for persistent, secure Google sessions.
 
-[Open LifeTrack](https://surajshukla22051-prog.github.io/LT-lifetracker/)
+[Open LifeTrack](https://lifetrack-ai.surajshukla22051.workers.dev/)
 
 The primary app URL is `https://lifetrack-ai.surajshukla22051.workers.dev/`.
 Deploy the Worker and configure its secrets and auth KV namespace (instructions
